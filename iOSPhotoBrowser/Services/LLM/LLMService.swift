@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import UIKit
 
 /// LLMサービスのファサード
 /// ユーザー設定と利用可能性に基づいて適切なLLMサービスにルーティング
@@ -12,6 +13,7 @@ actor LLMService {
 
     private var appleService: (any LLMServiceProtocol)?
     private var llamaService: LlamaService?
+    private var vlmService: VLMService?
 
     private init() {
         // Apple Foundation Models サービスの初期化（iOS 26以降）
@@ -21,6 +23,9 @@ actor LLMService {
 
         // Llama サービスの初期化
         llamaService = LlamaService()
+
+        // VLM サービスの初期化
+        vlmService = VLMService()
     }
 
     // MARK: - Public Interface
@@ -181,6 +186,38 @@ actor LLMService {
     func unloadLocalModel() async {
         await llamaService?.unloadModel()
     }
+
+    // MARK: - VLM (Vision Language Model) Methods
+
+    /// 画像から直接書籍情報を抽出（VLM使用、OCR不要）
+    func extractBookInfoFromImage(_ image: UIImage) async throws -> ExtractedBookData {
+        guard let service = vlmService else {
+            throw LLMError.notAvailable
+        }
+        guard await service.isAvailable else {
+            throw LLMError.modelNotLoaded
+        }
+        return try await service.extractBookInfo(from: image)
+    }
+
+    /// VLMが利用可能かどうか
+    func isVLMAvailable() async -> Bool {
+        guard let service = vlmService else { return false }
+        return await service.isAvailable
+    }
+
+    /// VLMモデルをメモリに読み込む
+    func loadVLMModel() async throws {
+        guard let service = vlmService else {
+            throw LLMError.notAvailable
+        }
+        try await service.loadModel()
+    }
+
+    /// VLMモデルをメモリから解放
+    func unloadVLMModel() async {
+        await vlmService?.unloadModel()
+    }
 }
 
 // MARK: - Convenience Extension for OCRService
@@ -194,5 +231,40 @@ extension LLMService {
             print("[LLMService] Extraction failed: \(error.localizedDescription)")
             return ExtractedBookData()
         }
+    }
+
+    /// 画像から書籍情報を抽出（失敗時は空のデータを返す）
+    func extractBookInfoFromImageOrEmpty(_ image: UIImage) async -> ExtractedBookData {
+        do {
+            return try await extractBookInfoFromImage(image)
+        } catch {
+            print("[LLMService] VLM extraction failed: \(error.localizedDescription)")
+            return ExtractedBookData()
+        }
+    }
+
+    /// 最適な方法で書籍情報を抽出（VLM優先、フォールバックとしてOCR+LLM）
+    func extractBookInfoBestMethod(image: UIImage, ocrText: String?) async -> ExtractedBookData {
+        // 1. VLMが利用可能なら画像から直接抽出
+        if await isVLMAvailable() {
+            let result = await extractBookInfoFromImageOrEmpty(image)
+            if result.hasValidData {
+                print("[LLMService] Extracted using VLM")
+                return result
+            }
+        }
+
+        // 2. OCRテキストがあればLLMで処理
+        if let ocrText = ocrText, !ocrText.isEmpty {
+            let result = await extractBookInfoOrEmpty(from: ocrText)
+            if result.hasValidData {
+                print("[LLMService] Extracted using OCR+LLM")
+                return result
+            }
+        }
+
+        // 3. 抽出失敗
+        print("[LLMService] No valid extraction result")
+        return ExtractedBookData()
     }
 }

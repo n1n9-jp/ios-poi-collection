@@ -219,9 +219,40 @@ actor OCRService {
     }
 
     /// LLMの利用可否に関わらず、最善の方法で書籍情報を抽出
+    /// VLM（Vision Language Model）が利用可能な場合は画像から直接抽出を試み、
+    /// そうでない場合はOCR + LLMのフローにフォールバック
     func extractBookInfoBestEffort(from image: UIImage) async throws -> (bookData: ExtractedBookData, rawText: String, usedLLM: Bool) {
         print("[OCRService] Starting extractBookInfoBestEffort...")
 
+        // Step 1: VLM（Vision Language Model）で直接抽出を試みる
+        let vlmAvailable = await LLMService.shared.isVLMAvailable()
+        print("[OCRService] VLM available: \(vlmAvailable)")
+
+        if vlmAvailable {
+            print("[OCRService] Trying VLM extraction...")
+            let vlmResult = await LLMService.shared.extractBookInfoFromImageOrEmpty(image)
+
+            if vlmResult.hasValidData {
+                print("[OCRService] VLM result - Title: \(vlmResult.title ?? "nil"), Author: \(vlmResult.author ?? "nil"), ISBN: \(vlmResult.isbn ?? "nil"), Confidence: \(vlmResult.confidence)")
+
+                // VLMで有効なデータが取得できた場合、OCRはスキップ可能
+                // ただし、ISBNが取得できなかった場合はOCRでISBNのみ抽出を試みる
+                var finalData = vlmResult
+                if finalData.isbn == nil {
+                    let ocrText = try await recognizeText(from: image)
+                    finalData.isbn = extractISBN(from: ocrText)
+                    print("[OCRService] ISBN from OCR regex: \(finalData.isbn ?? "nil")")
+                    return (finalData, ocrText, true)
+                }
+
+                // OCRテキストは空でも良いが、一応取得しておく（ログ用）
+                return (finalData, "[VLM抽出]", true)
+            } else {
+                print("[OCRService] VLM extraction failed or returned empty data, falling back to OCR+LLM")
+            }
+        }
+
+        // Step 2: VLMが利用できないか失敗した場合、従来のOCR + LLMフロー
         let ocrText = try await recognizeTextWithCorrection(from: image)
         print("[OCRService] OCR completed. Text length: \(ocrText.count)")
         print("[OCRService] OCR Text: \(ocrText.prefix(200))...")

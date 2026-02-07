@@ -69,7 +69,7 @@ actor LlamaService: LLMServiceProtocol {
         model_params.n_gpu_layers = 0 // iOSではCPUのみ
 
         // モデルを読み込み
-        model = llama_load_model_from_file(path, model_params)
+        model = llama_model_load_from_file(path, model_params)
         guard model != nil else {
             print("[\(serviceName)] Failed to load model from \(path)")
             throw LLMError.modelNotLoaded
@@ -82,9 +82,9 @@ actor LlamaService: LLMServiceProtocol {
         ctx_params.n_threads_batch = 4
 
         // コンテキストを作成
-        ctx = llama_new_context_with_model(model, ctx_params)
+        ctx = llama_init_from_model(model, ctx_params)
         guard ctx != nil else {
-            llama_free_model(model)
+            llama_model_free(model)
             model = nil
             print("[\(serviceName)] Failed to create context")
             throw LLMError.modelNotLoaded
@@ -107,7 +107,7 @@ actor LlamaService: LLMServiceProtocol {
             ctx = nil
         }
         if model != nil {
-            llama_free_model(model)
+            llama_model_free(model)
             model = nil
         }
         llama_backend_free()
@@ -155,10 +155,13 @@ actor LlamaService: LLMServiceProtocol {
 
     #if ENABLE_LLAMA
     private func generateText(prompt: String, ctx: OpaquePointer, model: OpaquePointer) async throws -> String {
+        // vocabを取得
+        let vocab = llama_model_get_vocab(model)
+
         // トークン化
         let n_ctx = llama_n_ctx(ctx)
         var tokens = [llama_token](repeating: 0, count: Int(n_ctx))
-        let n_tokens = llama_tokenize(model, prompt, Int32(prompt.utf8.count), &tokens, Int32(n_ctx), true, false)
+        let n_tokens = llama_tokenize(vocab, prompt, Int32(prompt.utf8.count), &tokens, Int32(n_ctx), true, false)
 
         guard n_tokens > 0 else {
             throw LLMError.extractionFailed("トークン化に失敗しました")
@@ -168,9 +171,14 @@ actor LlamaService: LLMServiceProtocol {
         var batch = llama_batch_init(512, 0, 1)
         defer { llama_batch_free(batch) }
 
-        // プロンプトトークンをバッチに追加
+        // プロンプトトークンをバッチに追加（新API: 直接構造体を操作）
+        batch.n_tokens = n_tokens
         for i in 0..<Int(n_tokens) {
-            llama_batch_add(&batch, tokens[i], Int32(i), [0], false)
+            batch.token[i] = tokens[i]
+            batch.pos[i] = Int32(i)
+            batch.n_seq_id[i] = 1
+            batch.seq_id[i]![0] = 0
+            batch.logits[i] = 0
         }
         batch.logits[Int(batch.n_tokens) - 1] = 1
 
@@ -185,7 +193,7 @@ actor LlamaService: LLMServiceProtocol {
         var n_cur = Int(n_tokens)
 
         for _ in 0..<maxTokens {
-            let n_vocab = llama_n_vocab(model)
+            let n_vocab = llama_vocab_n_tokens(vocab)
             let logits = llama_get_logits_ith(ctx, Int32(batch.n_tokens) - 1)
 
             // グリーディサンプリング
@@ -199,13 +207,13 @@ actor LlamaService: LLMServiceProtocol {
             }
 
             // EOSチェック
-            if llama_token_is_eog(model, max_id) {
+            if llama_vocab_is_eog(vocab, max_id) {
                 break
             }
 
-            // トークンを文字列に変換
+            // トークンを文字列に変換（新API: 6引数）
             var buf = [CChar](repeating: 0, count: 256)
-            let len = llama_token_to_piece(model, max_id, &buf, Int32(buf.count), false)
+            let len = llama_token_to_piece(vocab, max_id, &buf, Int32(buf.count), 0, false)
             if len > 0 {
                 let piece = String(cString: buf)
                 result += piece
@@ -220,9 +228,13 @@ actor LlamaService: LLMServiceProtocol {
                 }
             }
 
-            // 次のトークンを準備
-            llama_batch_clear(&batch)
-            llama_batch_add(&batch, max_id, Int32(n_cur), [0], true)
+            // 次のトークンを準備（新API: 直接構造体をリセット）
+            batch.n_tokens = 1
+            batch.token[0] = max_id
+            batch.pos[0] = Int32(n_cur)
+            batch.n_seq_id[0] = 1
+            batch.seq_id[0]![0] = 0
+            batch.logits[0] = 1
             n_cur += 1
 
             if llama_decode(ctx, batch) != 0 {

@@ -293,10 +293,21 @@ struct DetailView: View {
 
             if let extractedText = photo.extractedText, !extractedText.isEmpty, !photo.hasBookInfo {
                 DisclosureGroup("抽出テキスト") {
-                    Text(extractedText)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(extractedText)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button {
+                            UIPasteboard.general.string = extractedText
+                        } label: {
+                            Label("テキストをコピー", systemImage: "doc.on.doc")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
                 .font(.subheadline)
 
@@ -549,10 +560,43 @@ struct DetailView: View {
                 }
 
                 if let extractedText = viewModel.photo?.extractedText, !extractedText.isEmpty {
-                    Section("抽出テキスト（参考）") {
-                        Text(extractedText)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                    Section {
+                        // 行ごとに分割して、タップで検索キーワードに追加
+                        let lines = extractedText.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            Button {
+                                // 検索キーワードに追加（既存のキーワードがあればスペースで区切る）
+                                if viewModel.searchKeyword.isEmpty {
+                                    viewModel.searchKeyword = line
+                                } else {
+                                    viewModel.searchKeyword += " " + line
+                                }
+                            } label: {
+                                HStack {
+                                    Text(line)
+                                        .font(.caption)
+                                        .foregroundColor(.primary)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer()
+                                    Image(systemName: "plus.circle")
+                                        .font(.caption)
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("タップして追加")
+                            Spacer()
+                            Button {
+                                UIPasteboard.general.string = extractedText
+                            } label: {
+                                Label("全てコピー", systemImage: "doc.on.doc")
+                                    .font(.caption)
+                            }
+                        }
+                    } footer: {
+                        Text("行をタップすると検索キーワードに追加されます")
                     }
                 }
             }

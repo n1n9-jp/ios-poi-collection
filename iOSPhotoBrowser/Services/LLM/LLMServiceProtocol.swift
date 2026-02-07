@@ -8,7 +8,7 @@ import Foundation
 // MARK: - Extracted Data Model
 
 /// LLMが抽出した書籍情報
-struct ExtractedBookData {
+struct ExtractedBookData: Sendable {
     var title: String?
     var author: String?
     var publisher: String?
@@ -55,6 +55,29 @@ protocol LLMServiceProtocol {
 
     /// サービス名（デバッグ・表示用）
     var serviceName: String { get }
+}
+
+// MARK: - VLM Service Protocol
+
+import UIKit
+
+/// Vision Language Model サービスのプロトコル
+/// 画像から直接書籍情報を抽出（OCR不要）
+protocol VLMServiceProtocol {
+    /// 画像から書籍情報を抽出
+    func extractBookInfo(from image: UIImage) async throws -> ExtractedBookData
+
+    /// サービスが利用可能かどうか
+    var isAvailable: Bool { get async }
+
+    /// サービス名（デバッグ・表示用）
+    var serviceName: String { get }
+
+    /// モデルをメモリに読み込む
+    func loadModel() async throws
+
+    /// モデルをメモリから解放
+    func unloadModel() async
 }
 
 // MARK: - LLM Errors

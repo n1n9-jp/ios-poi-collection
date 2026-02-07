@@ -7,7 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		E8A2D0162F34199700351AF4 /* llama in Frameworks */ = {isa = PBXBuildFile; productRef = E8A2D0152F34199700351AF4 /* llama */; };
+		E8B647562F34500000000001 /* iOSPhotoBrowser/thirdparty/llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = E8B647572F34500000000002 /* iOSPhotoBrowser/thirdparty/llama.xcframework */; };
+		E8B647582F34500000000003 /* iOSPhotoBrowser/thirdparty/llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = E8B647572F34500000000002 /* iOSPhotoBrowser/thirdparty/llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,10 +28,25 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		E8B6475A2F34500000000005 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				E8B647582F34500000000003 /* iOSPhotoBrowser/thirdparty/llama.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		E8B647272F32E14A0003250C /* iOSPhotoBrowser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOSPhotoBrowser.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E8B647392F32E14B0003250C /* iOSPhotoBrowserTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = iOSPhotoBrowserTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E8B647432F32E14B0003250C /* iOSPhotoBrowserUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = iOSPhotoBrowserUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E8B647572F34500000000002 /* iOSPhotoBrowser/thirdparty/llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = iOSPhotoBrowser/thirdparty/llama.xcframework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -56,7 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E8A2D0162F34199700351AF4 /* llama in Frameworks */,
+				E8B647562F34500000000001 /* iOSPhotoBrowser/thirdparty/llama.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +100,7 @@
 				E8B6473C2F32E14B0003250C /* iOSPhotoBrowserTests */,
 				E8B647462F32E14B0003250C /* iOSPhotoBrowserUITests */,
 				E8B647282F32E14A0003250C /* Products */,
+				E8B647592F34500000000004 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -97,6 +114,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		E8B647592F34500000000004 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				E8B647572F34500000000002 /* iOSPhotoBrowser/thirdparty/llama.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -107,6 +132,7 @@
 				E8B647232F32E14A0003250C /* Sources */,
 				E8B647242F32E14A0003250C /* Frameworks */,
 				E8B647252F32E14A0003250C /* Resources */,
+				E8B6475A2F34500000000005 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -117,7 +143,6 @@
 			);
 			name = iOSPhotoBrowser;
 			packageProductDependencies = (
-				E8A2D0152F34199700351AF4 /* llama */,
 			);
 			productName = iOSPhotoBrowser;
 			productReference = E8B647272F32E14A0003250C /* iOSPhotoBrowser.app */;
@@ -202,7 +227,6 @@
 			mainGroup = E8B6471E2F32E14A0003250C;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				E8A2D0142F34199700351AF4 /* XCRemoteSwiftPackageReference "llama" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E8B647282F32E14A0003250C /* Products */;
@@ -597,25 +621,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		E8A2D0142F34199700351AF4 /* XCRemoteSwiftPackageReference "llama" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/StanfordBDHG/llama.cpp";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.3.3;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		E8A2D0152F34199700351AF4 /* llama */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E8A2D0142F34199700351AF4 /* XCRemoteSwiftPackageReference "llama" */;
-			productName = llama;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E8B6471F2F32E14A0003250C /* Project object */;
 }
