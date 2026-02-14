@@ -28,9 +28,9 @@ struct ContentView: View {
                     Label("検索", systemImage: "magnifyingglass")
                 }
 
-            ExtractedTextsView()
+            POIListView()
                 .tabItem {
-                    Label("テキスト", systemImage: "doc.text")
+                    Label("スポット", systemImage: "mappin.and.ellipse")
                 }
         }
     }

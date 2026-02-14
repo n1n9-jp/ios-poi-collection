@@ -33,12 +33,12 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
         }
     }
 
-    func extractBookInfo(from ocrText: String) async throws -> ExtractedBookData {
+    func extractPOIInfo(from ocrText: String) async throws -> ExtractedPOIData {
         #if canImport(FoundationModels)
         print("[AppleIntelligence] Starting extraction...")
         print("[AppleIntelligence] OCR Text length: \(ocrText.count) characters")
 
-        let prompt = makeBookExtractionPrompt(ocrText: ocrText)
+        let prompt = makePOIExtractionPrompt(ocrText: ocrText)
 
         do {
             // セッションを作成または再利用
@@ -60,7 +60,7 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
             print("[AppleIntelligence] \(responseText.prefix(500))")
 
             let result = parseJSONResponse(responseText)
-            print("[AppleIntelligence] Parsed result - Title: \(result.title ?? "nil"), Author: \(result.author ?? "nil"), ISBN: \(result.isbn ?? "nil")")
+            print("[AppleIntelligence] Parsed result - Name: \(result.name ?? "nil"), Address: \(result.address ?? "nil"), Phone: \(result.phoneNumber ?? "nil")")
             return result
         } catch let error as LLMError {
             print("[AppleIntelligence] LLMError: \(error.localizedDescription)")
@@ -77,7 +77,7 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
 
     // MARK: - Private Helpers
 
-    private func parseJSONResponse(_ response: String) -> ExtractedBookData {
+    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
         // JSONブロックを抽出（```json ... ``` や直接JSONの両方に対応）
         var jsonString = response
 
@@ -95,82 +95,85 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
         // JSONをパース
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            // パース失敗時は正規表現でタイトルと著者を抽出
+            // パース失敗時は正規表現で施設名と住所を抽出
             return extractFromPlainText(response)
         }
 
-        let title = json["title"] as? String
-        let author = json["author"] as? String
-        let publisher = json["publisher"] as? String
-        var isbn = json["isbn"] as? String
-
-        // ISBNのクリーニング（数字のみ抽出）
-        if let rawISBN = isbn {
-            isbn = rawISBN.filter { $0.isNumber }
-            if isbn?.count != 13 {
-                isbn = nil
-            }
-        }
+        let name = json["name"] as? String
+        let address = json["address"] as? String
+        let phone = json["phone"] as? String
+        let hours = json["hours"] as? String
+        let category = json["category"] as? String
+        let priceRange = json["priceRange"] as? String
 
         // 信頼度スコアを計算
         var confidence = 0.0
         var fields = 0
-        if title != nil { fields += 1 }
-        if author != nil { fields += 1 }
-        if publisher != nil { fields += 1 }
-        if isbn != nil { fields += 2 }  // ISBNは重み付け
-        confidence = Double(fields) / 5.0
+        if name != nil { fields += 1 }
+        if address != nil { fields += 1 }
+        if phone != nil { fields += 1 }
+        if hours != nil { fields += 1 }
+        if category != nil { fields += 1 }
+        if priceRange != nil { fields += 1 }
+        confidence = Double(fields) / 6.0
 
-        return ExtractedBookData(
-            title: title,
-            author: author,
-            publisher: publisher,
-            isbn: isbn,
+        return ExtractedPOIData(
+            name: name,
+            address: address,
+            phoneNumber: phone,
+            businessHours: hours,
+            category: category,
+            priceRange: priceRange,
             confidence: confidence
         )
     }
 
     /// JSONパース失敗時のフォールバック
-    private func extractFromPlainText(_ text: String) -> ExtractedBookData {
-        var title: String?
-        var author: String?
-        var isbn: String?
+    private func extractFromPlainText(_ text: String) -> ExtractedPOIData {
+        var name: String?
+        var address: String?
+        var phone: String?
 
-        // タイトルパターン: 「タイトル: xxx」や「title: xxx」
-        let titlePatterns = ["タイトル[：:]\\s*(.+)", "title[：:]\\s*(.+)"]
-        for pattern in titlePatterns {
+        // 施設名パターン: 「施設名: xxx」や「name: xxx」
+        let namePatterns = ["施設名[：:]\\s*(.+)", "店名[：:]\\s*(.+)", "name[：:]\\s*(.+)"]
+        for pattern in namePatterns {
             if let match = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 let line = String(text[match])
                 if let colonIndex = line.firstIndex(of: ":") ?? line.firstIndex(of: "：") {
-                    title = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+                    name = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
                     break
                 }
             }
         }
 
-        // 著者パターン
-        let authorPatterns = ["著者[：:]\\s*(.+)", "author[：:]\\s*(.+)"]
-        for pattern in authorPatterns {
+        // 住所パターン
+        let addressPatterns = ["住所[：:]\\s*(.+)", "address[：:]\\s*(.+)"]
+        for pattern in addressPatterns {
             if let match = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
                 let line = String(text[match])
                 if let colonIndex = line.firstIndex(of: ":") ?? line.firstIndex(of: "：") {
-                    author = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+                    address = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
                     break
                 }
             }
         }
 
-        // ISBN-13パターン
-        let isbnPattern = "97[89]\\d{10}"
-        if let match = text.range(of: isbnPattern, options: .regularExpression) {
-            isbn = String(text[match])
+        // 電話番号パターン
+        let phonePatterns = ["電話[：:]\\s*(.+)", "TEL[：:]\\s*(.+)", "phone[：:]\\s*(.+)"]
+        for pattern in phonePatterns {
+            if let match = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                let line = String(text[match])
+                if let colonIndex = line.firstIndex(of: ":") ?? line.firstIndex(of: "：") {
+                    phone = String(line[line.index(after: colonIndex)...]).trimmingCharacters(in: .whitespaces)
+                    break
+                }
+            }
         }
 
-        return ExtractedBookData(
-            title: title,
-            author: author,
-            publisher: nil,
-            isbn: isbn,
+        return ExtractedPOIData(
+            name: name,
+            address: address,
+            phoneNumber: phone,
             confidence: 0.3  // プレーンテキスト抽出は低信頼度
         )
     }

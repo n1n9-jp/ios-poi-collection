@@ -23,7 +23,6 @@ final class DependencyContainer {
     let photoLibraryService = PhotoLibraryService.shared
     let fileImportService = FileImportService.shared
     let ocrService = OCRService.shared
-    let bookInfoService = BookInfoService.shared
 
     // MARK: - LLM Services
     let llmModelManager = LLMModelManager.shared
@@ -38,7 +37,7 @@ final class DependencyContainer {
     lazy var albumRepository: AlbumRepositoryProtocol = AlbumRepository(
         context: coreDataStack.viewContext
     )
-    lazy var bookInfoRepository: BookInfoRepositoryProtocol = BookInfoRepository(
+    lazy var poiInfoRepository: POIInfoRepositoryProtocol = POIInfoRepository(
         context: coreDataStack.viewContext
     )
 
@@ -68,10 +67,9 @@ final class DependencyContainer {
             imageRepository: imageRepository,
             tagRepository: tagRepository,
             albumRepository: albumRepository,
-            bookInfoRepository: bookInfoRepository,
+            poiInfoRepository: poiInfoRepository,
             deleteImageUseCase: deleteImageUseCase,
-            ocrService: ocrService,
-            bookInfoService: bookInfoService
+            ocrService: ocrService
         )
     }
 
@@ -98,10 +96,10 @@ final class DependencyContainer {
         SearchViewModel(imageRepository: imageRepository)
     }
 
-    func makeExtractedTextsViewModel() -> ExtractedTextsViewModel {
-        ExtractedTextsViewModel(
+    func makePOIListViewModel() -> POIListViewModel {
+        POIListViewModel(
             imageRepository: imageRepository,
-            bookInfoRepository: bookInfoRepository
+            poiInfoRepository: poiInfoRepository
         )
     }
 

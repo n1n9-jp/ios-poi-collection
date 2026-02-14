@@ -1,5 +1,5 @@
 //
-//  ExtractedTextsViewModel.swift
+//  POIListViewModel.swift
 //  iOSPhotoBrowser
 //
 
@@ -8,49 +8,27 @@ import Combine
 
 // MARK: - Filter Options
 
-enum ReadingStatusFilter: CaseIterable {
+enum VisitStatusFilter: CaseIterable {
     case all
-    case unread
-    case reading
-    case finished
+    case wantToVisit
+    case visited
+    case favorite
 
     var displayName: String {
         switch self {
         case .all: return "すべて"
-        case .unread: return "未読"
-        case .reading: return "読書中"
-        case .finished: return "読了"
+        case .wantToVisit: return "行きたい"
+        case .visited: return "訪問済み"
+        case .favorite: return "お気に入り"
         }
     }
 
-    func matches(_ status: ReadingStatus) -> Bool {
+    func matches(_ status: VisitStatus) -> Bool {
         switch self {
         case .all: return true
-        case .unread: return status == .unread
-        case .reading: return status == .reading
-        case .finished: return status == .finished
-        }
-    }
-}
-
-enum OwnershipStatusFilter: CaseIterable {
-    case all
-    case owned
-    case notOwned
-
-    var displayName: String {
-        switch self {
-        case .all: return "すべて"
-        case .owned: return "持っている"
-        case .notOwned: return "持っていない"
-        }
-    }
-
-    func matches(_ status: OwnershipStatus) -> Bool {
-        switch self {
-        case .all: return true
-        case .owned: return status == .owned
-        case .notOwned: return status == .notOwned
+        case .wantToVisit: return status == .wantToVisit
+        case .visited: return status == .visited
+        case .favorite: return status == .favorite
         }
     }
 }
@@ -58,7 +36,7 @@ enum OwnershipStatusFilter: CaseIterable {
 // MARK: - ViewModel
 
 @MainActor
-final class ExtractedTextsViewModel: ObservableObject {
+final class POIListViewModel: ObservableObject {
     @Published private(set) var items: [ExtractedTextItem] = []
     @Published private(set) var groupedItems: [CategoryGroup] = []
     @Published private(set) var isLoading = false
@@ -66,29 +44,30 @@ final class ExtractedTextsViewModel: ObservableObject {
     @Published var showingError = false
 
     // Filter states
-    @Published var readingStatusFilter: ReadingStatusFilter = .all {
+    @Published var visitStatusFilter: VisitStatusFilter = .all {
         didSet { applyFilters() }
     }
-    @Published var ownershipStatusFilter: OwnershipStatusFilter = .all {
-        didSet { applyFilters() }
-    }
+
+    // 一括生成関連
+    @Published private(set) var isGeneratingBatch = false
+    @Published private(set) var batchProgress: (current: Int, total: Int) = (0, 0)
+    @Published var batchResultMessage: String?
 
     private var allItems: [ExtractedTextItem] = []
     private let imageRepository: ImageRepositoryProtocol
-    private let bookInfoRepository: BookInfoRepositoryProtocol
+    private let poiInfoRepository: POIInfoRepositoryProtocol
 
-    init(imageRepository: ImageRepositoryProtocol, bookInfoRepository: BookInfoRepositoryProtocol) {
+    init(imageRepository: ImageRepositoryProtocol, poiInfoRepository: POIInfoRepositoryProtocol) {
         self.imageRepository = imageRepository
-        self.bookInfoRepository = bookInfoRepository
+        self.poiInfoRepository = poiInfoRepository
     }
 
     var hasActiveFilters: Bool {
-        readingStatusFilter != .all || ownershipStatusFilter != .all
+        visitStatusFilter != .all
     }
 
     func clearFilters() {
-        readingStatusFilter = .all
-        ownershipStatusFilter = .all
+        visitStatusFilter = .all
     }
 
     func loadItems() async {
@@ -97,22 +76,22 @@ final class ExtractedTextsViewModel: ObservableObject {
 
         do {
             let photos = try await imageRepository.fetchAll(sortedBy: .importedAtDescending)
-            // Filter photos that have extracted text or book info
+            // Filter photos that have extracted text or POI info
             allItems = photos.compactMap { photo -> ExtractedTextItem? in
-                let hasContent = (photo.extractedText != nil && !photo.extractedText!.isEmpty) || photo.hasBookInfo
+                let hasContent = (photo.extractedText != nil && !photo.extractedText!.isEmpty) || photo.hasPOIInfo
                 guard hasContent else { return nil }
 
                 return ExtractedTextItem(
                     id: photo.id,
                     thumbnailPath: photo.thumbnailPath,
                     extractedText: photo.extractedText,
-                    bookTitle: photo.bookInfo?.title,
-                    bookAuthor: photo.bookInfo?.author,
-                    bookPublisher: photo.bookInfo?.publisher,
-                    bookISBN: photo.bookInfo?.isbn,
-                    bookCategory: photo.bookInfo?.category,
-                    readingStatus: photo.bookInfo?.readingStatus ?? .unread,
-                    ownershipStatus: photo.bookInfo?.ownershipStatus ?? .notOwned,
+                    poiName: photo.poiInfo?.name,
+                    poiAddress: photo.poiInfo?.address,
+                    poiPhone: photo.poiInfo?.phoneNumber,
+                    poiHours: photo.poiInfo?.businessHours,
+                    poiCategory: photo.poiInfo?.category,
+                    poiPriceRange: photo.poiInfo?.priceRange,
+                    visitStatus: photo.poiInfo?.visitStatus ?? .wantToVisit,
                     ocrProcessedAt: photo.ocrProcessedAt
                 )
             }
@@ -126,8 +105,7 @@ final class ExtractedTextsViewModel: ObservableObject {
 
     private func applyFilters() {
         let filtered = allItems.filter { item in
-            readingStatusFilter.matches(item.readingStatus) &&
-            ownershipStatusFilter.matches(item.ownershipStatus)
+            visitStatusFilter.matches(item.visitStatus)
         }
         items = filtered
         groupedItems = groupByCategory(filtered)
@@ -138,7 +116,7 @@ final class ExtractedTextsViewModel: ObservableObject {
         let uncategorizedKey = "未分類"
 
         for item in items {
-            let category = item.bookCategory ?? uncategorizedKey
+            let category = item.poiCategory ?? uncategorizedKey
             grouped[category, default: []].append(item)
         }
 
@@ -152,25 +130,131 @@ final class ExtractedTextsViewModel: ObservableObject {
         return sortedKeys.map { CategoryGroup(category: $0, items: grouped[$0]!) }
     }
 
+    /// 未リンクアイテム（抽出テキストあり・POI情報なし）の数
+    var unlinkedItemCount: Int {
+        allItems.filter { !$0.hasPOIInfo && $0.extractedText != nil && !$0.extractedText!.isEmpty }.count
+    }
+
+    // MARK: - POI Info Generation
+
+    /// 個別アイテムの抽出テキストからスポット情報を生成（ルールベース+LLMハイブリッド）
+    func generatePOIInfo(for itemId: UUID) async {
+        guard let item = allItems.first(where: { $0.id == itemId }),
+              let text = item.extractedText, !text.isEmpty else {
+            return
+        }
+
+        // ルールベースで基本抽出
+        let ruleResult = OCRService.extractPOIInfoByRules(from: text)
+
+        // LLMが利用可能ならマージ
+        var finalResult = ruleResult
+        let llmAvailable = await LLMService.shared.isAnyServiceAvailable()
+        if llmAvailable {
+            let llmResult = await LLMService.shared.extractPOIInfoOrEmpty(from: text)
+            finalResult = OCRService.mergeExtractedData(rule: ruleResult, llm: llmResult)
+        }
+
+        guard finalResult.hasValidData else {
+            batchResultMessage = "スポット情報を抽出できませんでした"
+            return
+        }
+
+        do {
+            let poiInfo = POIInfo(
+                id: UUID(),
+                name: finalResult.name,
+                address: finalResult.address,
+                phoneNumber: finalResult.phoneNumber,
+                businessHours: finalResult.businessHours,
+                category: finalResult.category,
+                priceRange: finalResult.priceRange,
+                visitStatus: .wantToVisit,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+            try await poiInfoRepository.save(poiInfo, for: itemId)
+            await loadItems()
+        } catch {
+            self.error = error
+            showingError = true
+        }
+    }
+
+    /// 未リンクアイテムを一括でスポット情報に変換（ルールベース+LLMハイブリッド）
+    func generatePOIInfoForUnlinkedItems() async {
+        let unlinkedItems = allItems.filter { !$0.hasPOIInfo && $0.extractedText != nil && !$0.extractedText!.isEmpty }
+        guard !unlinkedItems.isEmpty else {
+            batchResultMessage = "処理対象のアイテムがありません"
+            return
+        }
+
+        let llmAvailable = await LLMService.shared.isAnyServiceAvailable()
+
+        isGeneratingBatch = true
+        batchProgress = (0, unlinkedItems.count)
+        batchResultMessage = nil
+        var successCount = 0
+
+        for (index, item) in unlinkedItems.enumerated() {
+            batchProgress = (index + 1, unlinkedItems.count)
+
+            guard let text = item.extractedText else { continue }
+
+            // ルールベース抽出
+            let ruleResult = OCRService.extractPOIInfoByRules(from: text)
+
+            // LLMが利用可能ならマージ
+            var finalResult = ruleResult
+            if llmAvailable {
+                let llmResult = await LLMService.shared.extractPOIInfoOrEmpty(from: text)
+                finalResult = OCRService.mergeExtractedData(rule: ruleResult, llm: llmResult)
+            }
+
+            if finalResult.hasValidData {
+                do {
+                    let poiInfo = POIInfo(
+                        id: UUID(),
+                        name: finalResult.name,
+                        address: finalResult.address,
+                        phoneNumber: finalResult.phoneNumber,
+                        businessHours: finalResult.businessHours,
+                        category: finalResult.category,
+                        priceRange: finalResult.priceRange,
+                        visitStatus: .wantToVisit,
+                        createdAt: Date(),
+                        updatedAt: Date()
+                    )
+                    try await poiInfoRepository.save(poiInfo, for: item.id)
+                    successCount += 1
+                } catch {
+                    print("[POIListViewModel] Failed to save POI for \(item.id): \(error)")
+                }
+            }
+        }
+
+        isGeneratingBatch = false
+        batchResultMessage = "\(unlinkedItems.count)件中\(successCount)件のスポット情報を生成しました"
+        await loadItems()
+    }
+
     // MARK: - Status Update
 
     func updateStatus(
         for itemId: UUID,
-        readingStatus: ReadingStatus,
-        ownershipStatus: OwnershipStatus
+        visitStatus: VisitStatus
     ) async {
         do {
-            // Fetch current book info
-            guard var bookInfo = try await bookInfoRepository.fetch(for: itemId) else {
+            // Fetch current POI info
+            guard var poiInfo = try await poiInfoRepository.fetch(for: itemId) else {
                 return
             }
 
             // Update status
-            bookInfo.readingStatus = readingStatus
-            bookInfo.ownershipStatus = ownershipStatus
+            poiInfo.visitStatus = visitStatus
 
             // Save to repository
-            try await bookInfoRepository.update(bookInfo)
+            try await poiInfoRepository.update(poiInfo)
 
             // Update local items
             if let index = allItems.firstIndex(where: { $0.id == itemId }) {
@@ -179,13 +263,13 @@ final class ExtractedTextsViewModel: ObservableObject {
                     id: oldItem.id,
                     thumbnailPath: oldItem.thumbnailPath,
                     extractedText: oldItem.extractedText,
-                    bookTitle: oldItem.bookTitle,
-                    bookAuthor: oldItem.bookAuthor,
-                    bookPublisher: oldItem.bookPublisher,
-                    bookISBN: oldItem.bookISBN,
-                    bookCategory: oldItem.bookCategory,
-                    readingStatus: readingStatus,
-                    ownershipStatus: ownershipStatus,
+                    poiName: oldItem.poiName,
+                    poiAddress: oldItem.poiAddress,
+                    poiPhone: oldItem.poiPhone,
+                    poiHours: oldItem.poiHours,
+                    poiCategory: oldItem.poiCategory,
+                    poiPriceRange: oldItem.poiPriceRange,
+                    visitStatus: visitStatus,
                     ocrProcessedAt: oldItem.ocrProcessedAt
                 )
                 applyFilters()
@@ -207,22 +291,22 @@ struct ExtractedTextItem: Identifiable {
     let id: UUID
     let thumbnailPath: String?
     let extractedText: String?
-    let bookTitle: String?
-    let bookAuthor: String?
-    let bookPublisher: String?
-    let bookISBN: String?
-    let bookCategory: String?
-    let readingStatus: ReadingStatus
-    let ownershipStatus: OwnershipStatus
+    let poiName: String?
+    let poiAddress: String?
+    let poiPhone: String?
+    let poiHours: String?
+    let poiCategory: String?
+    let poiPriceRange: String?
+    let visitStatus: VisitStatus
     let ocrProcessedAt: Date?
 
-    var hasBookInfo: Bool {
-        bookTitle != nil || bookAuthor != nil || bookPublisher != nil
+    var hasPOIInfo: Bool {
+        poiName != nil || poiAddress != nil
     }
 
     var displayTitle: String {
-        if let title = bookTitle {
-            return title
+        if let name = poiName {
+            return name
         } else if let text = extractedText {
             // Return first line or first 50 characters
             let firstLine = text.components(separatedBy: .newlines).first ?? text

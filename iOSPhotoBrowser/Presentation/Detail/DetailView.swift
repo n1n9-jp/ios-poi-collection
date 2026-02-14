@@ -35,8 +35,8 @@ struct DetailView: View {
                 }
 
                 if let photo = viewModel.photo {
-                    // Book Info Section
-                    bookInfoSection(photo: photo)
+                    // POI Info Section
+                    poiInfoSection(photo: photo)
 
                     // Tags Section
                     tagsSection(photo: photo)
@@ -87,14 +87,8 @@ struct DetailView: View {
         .sheet(isPresented: $viewModel.showingAlbumSelector) {
             albumSelectorSheet
         }
-        .sheet(isPresented: $viewModel.showingBookInfoEditor) {
-            bookInfoEditorSheet
-        }
-        .sheet(isPresented: $viewModel.showingTitleSearchSheet) {
-            titleSearchSheet
-        }
-        .sheet(isPresented: $viewModel.showingSearchResults) {
-            searchResultsSheet
+        .sheet(isPresented: $viewModel.showingPOIInfoEditor) {
+            poiInfoEditorSheet
         }
         .alert("エラー", isPresented: $viewModel.showingError) {
             Button("OK") {}
@@ -188,10 +182,10 @@ struct DetailView: View {
         .cornerRadius(12)
     }
 
-    private func bookInfoSection(photo: PhotoItem) -> some View {
+    private func poiInfoSection(photo: PhotoItem) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("書誌情報")
+                Text("スポット情報")
                     .font(.headline)
 
                 Spacer()
@@ -199,16 +193,16 @@ struct DetailView: View {
                 if viewModel.isProcessingOCR {
                     ProgressView()
                         .scaleEffect(0.8)
-                } else if photo.hasBookInfo {
+                } else if photo.hasPOIInfo {
                     Menu {
                         Button {
-                            viewModel.startEditingBookInfo()
+                            viewModel.startEditingPOIInfo()
                         } label: {
                             Label("編集", systemImage: "pencil")
                         }
                         Button(role: .destructive) {
                             Task {
-                                await viewModel.deleteBookInfo()
+                                await viewModel.deletePOIInfo()
                             }
                         } label: {
                             Label("削除", systemImage: "trash")
@@ -217,9 +211,27 @@ struct DetailView: View {
                         Image(systemName: "ellipsis.circle")
                     }
                 } else {
-                    Button {
-                        Task {
-                            await viewModel.performOCRAndFetchBookInfo()
+                    Menu {
+                        Button {
+                            Task {
+                                await viewModel.performOCRAndExtractPOIInfo()
+                            }
+                        } label: {
+                            Label("画像から抽出", systemImage: "doc.text.viewfinder")
+                        }
+                        if photo.extractedText != nil && !photo.extractedText!.isEmpty {
+                            Button {
+                                Task {
+                                    await viewModel.generatePOIInfoFromExtractedText()
+                                }
+                            } label: {
+                                Label("テキストから生成", systemImage: "sparkles")
+                            }
+                            Button {
+                                viewModel.startCreatingPOIInfo()
+                            } label: {
+                                Label("手動で作成", systemImage: "square.and.pencil")
+                            }
                         }
                     } label: {
                         Text("抽出")
@@ -236,39 +248,36 @@ struct DetailView: View {
                         .foregroundColor(.secondary)
                     Spacer()
                 }
-            } else if let bookInfo = photo.bookInfo {
+            } else if let poiInfo = photo.poiInfo {
                 VStack(alignment: .leading, spacing: 8) {
-                    // User status badges
+                    // Visit status badge
                     HStack(spacing: 12) {
                         statusBadge(
-                            icon: bookInfo.readingStatus.iconName,
-                            text: bookInfo.readingStatus.displayName,
-                            color: readingStatusColor(bookInfo.readingStatus)
-                        )
-                        statusBadge(
-                            icon: bookInfo.ownershipStatus.iconName,
-                            text: bookInfo.ownershipStatus.displayName,
-                            color: bookInfo.ownershipStatus == .owned ? .green : .gray
+                            icon: poiInfo.visitStatus.iconName,
+                            text: poiInfo.visitStatus.displayName,
+                            color: visitStatusColor(poiInfo.visitStatus)
                         )
                     }
 
                     Divider()
 
-                    if let title = bookInfo.title {
-                        bookInfoRow("タイトル", value: title)
+                    if let name = poiInfo.name {
+                        poiInfoRow("施設名", value: name)
                     }
-                    if let author = bookInfo.author {
-                        bookInfoRow("著者", value: author)
+                    if let address = poiInfo.address {
+                        poiInfoRow("住所", value: address)
                     }
-                    if let publisher = bookInfo.publisher {
-                        bookInfoRow("出版社", value: publisher)
+                    if let phoneNumber = poiInfo.phoneNumber {
+                        poiInfoRow("電話", value: phoneNumber)
                     }
-                    bookInfoRow("ISBN", value: bookInfo.isbn)
-                    if let publishedDate = bookInfo.publishedDate, !publishedDate.isEmpty {
-                        bookInfoRow("出版日", value: publishedDate)
+                    if let businessHours = poiInfo.businessHours {
+                        poiInfoRow("営業時間", value: businessHours)
                     }
-                    if let category = bookInfo.category {
-                        bookInfoRow("カテゴリ", value: category)
+                    if let category = poiInfo.category {
+                        poiInfoRow("カテゴリ", value: category)
+                    }
+                    if let priceRange = poiInfo.priceRange {
+                        poiInfoRow("価格帯", value: priceRange)
                     }
                 }
             } else if let message = viewModel.ocrMessage {
@@ -276,22 +285,14 @@ struct DetailView: View {
                     Text(message)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-
-                    Button {
-                        viewModel.startTitleSearch()
-                    } label: {
-                        Label("タイトルで検索", systemImage: "magnifyingglass")
-                            .font(.subheadline)
-                    }
-                    .buttonStyle(.bordered)
                 }
             } else {
-                Text("書誌情報がありません")
+                Text("スポット情報がありません")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
 
-            if let extractedText = photo.extractedText, !extractedText.isEmpty, !photo.hasBookInfo {
+            if let extractedText = photo.extractedText, !extractedText.isEmpty, !photo.hasPOIInfo {
                 DisclosureGroup("抽出テキスト") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(extractedText)
@@ -310,16 +311,6 @@ struct DetailView: View {
                     }
                 }
                 .font(.subheadline)
-
-                if viewModel.ocrMessage == nil {
-                    Button {
-                        viewModel.startTitleSearch()
-                    } label: {
-                        Label("タイトルで検索", systemImage: "magnifyingglass")
-                            .font(.subheadline)
-                    }
-                    .buttonStyle(.bordered)
-                }
             }
         }
         .padding()
@@ -341,15 +332,15 @@ struct DetailView: View {
         .cornerRadius(6)
     }
 
-    private func readingStatusColor(_ status: ReadingStatus) -> Color {
+    private func visitStatusColor(_ status: VisitStatus) -> Color {
         switch status {
-        case .unread: return .gray
-        case .reading: return .blue
-        case .finished: return .green
+        case .wantToVisit: return .orange
+        case .visited: return .blue
+        case .favorite: return .yellow
         }
     }
 
-    private func bookInfoRow(_ label: String, value: String) -> some View {
+    private func poiInfoRow(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption)
@@ -485,196 +476,77 @@ struct DetailView: View {
         .presentationDetents([.medium, .large])
     }
 
-    private var bookInfoEditorSheet: some View {
+    private var poiInfoEditorSheet: some View {
         NavigationStack {
             Form {
-                if let binding = Binding($viewModel.editingBookInfo) {
-                    Section("ユーザー情報") {
-                        Picker("読書状況", selection: binding.readingStatus) {
-                            ForEach(ReadingStatus.allCases, id: \.self) { status in
-                                Label(status.displayName, systemImage: status.iconName)
-                                    .tag(status)
-                            }
-                        }
-
-                        Picker("所有状況", selection: binding.ownershipStatus) {
-                            ForEach(OwnershipStatus.allCases, id: \.self) { status in
+                if let binding = Binding($viewModel.editingPOIInfo) {
+                    Section("訪問ステータス") {
+                        Picker("訪問状況", selection: binding.visitStatus) {
+                            ForEach(VisitStatus.allCases, id: \.self) { status in
                                 Label(status.displayName, systemImage: status.iconName)
                                     .tag(status)
                             }
                         }
                     }
 
-                    Section("書誌情報") {
-                        TextField("タイトル", text: Binding(
-                            get: { binding.wrappedValue.title ?? "" },
-                            set: { binding.wrappedValue.title = $0.isEmpty ? nil : $0 }
+                    Section("スポット情報") {
+                        TextField("施設名", text: Binding(
+                            get: { binding.wrappedValue.name ?? "" },
+                            set: { binding.wrappedValue.name = $0.isEmpty ? nil : $0 }
                         ))
-                        TextField("著者", text: Binding(
-                            get: { binding.wrappedValue.author ?? "" },
-                            set: { binding.wrappedValue.author = $0.isEmpty ? nil : $0 }
+                        TextField("住所", text: Binding(
+                            get: { binding.wrappedValue.address ?? "" },
+                            set: { binding.wrappedValue.address = $0.isEmpty ? nil : $0 }
                         ))
-                        TextField("出版社", text: Binding(
-                            get: { binding.wrappedValue.publisher ?? "" },
-                            set: { binding.wrappedValue.publisher = $0.isEmpty ? nil : $0 }
+                        TextField("電話番号", text: Binding(
+                            get: { binding.wrappedValue.phoneNumber ?? "" },
+                            set: { binding.wrappedValue.phoneNumber = $0.isEmpty ? nil : $0 }
                         ))
-                        TextField("出版日", text: Binding(
-                            get: { binding.wrappedValue.publishedDate ?? "" },
-                            set: { binding.wrappedValue.publishedDate = $0.isEmpty ? nil : $0 }
+                        TextField("営業時間", text: Binding(
+                            get: { binding.wrappedValue.businessHours ?? "" },
+                            set: { binding.wrappedValue.businessHours = $0.isEmpty ? nil : $0 }
+                        ))
+                        TextField("カテゴリ", text: Binding(
+                            get: { binding.wrappedValue.category ?? "" },
+                            set: { binding.wrappedValue.category = $0.isEmpty ? nil : $0 }
+                        ))
+                        TextField("価格帯", text: Binding(
+                            get: { binding.wrappedValue.priceRange ?? "" },
+                            set: { binding.wrappedValue.priceRange = $0.isEmpty ? nil : $0 }
+                        ))
+                        TextField("メモ", text: Binding(
+                            get: { binding.wrappedValue.notes ?? "" },
+                            set: { binding.wrappedValue.notes = $0.isEmpty ? nil : $0 }
                         ))
                     }
 
-                    Section {
-                        Text("ISBN: \(binding.wrappedValue.isbn)")
-                            .foregroundColor(.secondary)
+                    // 新規作成時に抽出テキストを参照表示
+                    if viewModel.isCreatingNewPOI,
+                       let extractedText = viewModel.photo?.extractedText, !extractedText.isEmpty {
+                        Section("参考: 抽出テキスト") {
+                            Text(extractedText)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
-            .navigationTitle("書誌情報を編集")
+            .navigationTitle(viewModel.isCreatingNewPOI ? "スポット情報を作成" : "スポット情報を編集")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("キャンセル") {
-                        viewModel.showingBookInfoEditor = false
-                        viewModel.editingBookInfo = nil
+                        viewModel.showingPOIInfoEditor = false
+                        viewModel.editingPOIInfo = nil
+                        viewModel.isCreatingNewPOI = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         Task {
-                            await viewModel.updateBookInfo()
+                            await viewModel.savePOIInfo()
                         }
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private var titleSearchSheet: some View {
-        NavigationStack {
-            Form {
-                Section("検索キーワード") {
-                    TextField("タイトルや著者名を入力", text: $viewModel.searchKeyword)
-                        .textInputAutocapitalization(.never)
-                }
-
-                if let extractedText = viewModel.photo?.extractedText, !extractedText.isEmpty {
-                    Section {
-                        // 行ごとに分割して、タップで検索キーワードに追加
-                        let lines = extractedText.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                            Button {
-                                // 検索キーワードに追加（既存のキーワードがあればスペースで区切る）
-                                if viewModel.searchKeyword.isEmpty {
-                                    viewModel.searchKeyword = line
-                                } else {
-                                    viewModel.searchKeyword += " " + line
-                                }
-                            } label: {
-                                HStack {
-                                    Text(line)
-                                        .font(.caption)
-                                        .foregroundColor(.primary)
-                                        .multilineTextAlignment(.leading)
-                                    Spacer()
-                                    Image(systemName: "plus.circle")
-                                        .font(.caption)
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                    } header: {
-                        HStack {
-                            Text("タップして追加")
-                            Spacer()
-                            Button {
-                                UIPasteboard.general.string = extractedText
-                            } label: {
-                                Label("全てコピー", systemImage: "doc.on.doc")
-                                    .font(.caption)
-                            }
-                        }
-                    } footer: {
-                        Text("行をタップすると検索キーワードに追加されます")
-                    }
-                }
-            }
-            .navigationTitle("タイトルで検索")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("キャンセル") {
-                        viewModel.cancelTitleSearch()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if viewModel.isSearching {
-                        ProgressView()
-                    } else {
-                        Button("検索") {
-                            Task {
-                                await viewModel.searchByTitle()
-                            }
-                        }
-                        .disabled(viewModel.searchKeyword.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-            }
-        }
-        .presentationDetents([.medium])
-    }
-
-    private var searchResultsSheet: some View {
-        NavigationStack {
-            List {
-                if viewModel.searchResults.isEmpty {
-                    Text("検索結果がありません")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(viewModel.searchResults) { bookInfo in
-                        Button {
-                            Task {
-                                await viewModel.selectBookInfo(bookInfo)
-                            }
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(bookInfo.title ?? "タイトル不明")
-                                    .font(.headline)
-                                    .foregroundColor(.primary)
-                                if let author = bookInfo.author {
-                                    Text(author)
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-                                }
-                                HStack {
-                                    if let publisher = bookInfo.publisher {
-                                        Text(publisher)
-                                    }
-                                    if !bookInfo.isbn.isEmpty {
-                                        Text("ISBN: \(bookInfo.isbn)")
-                                    }
-                                }
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("検索結果")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("キャンセル") {
-                        viewModel.cancelTitleSearch()
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("再検索") {
-                        viewModel.showingSearchResults = false
-                        viewModel.showingTitleSearchSheet = true
                     }
                 }
             }

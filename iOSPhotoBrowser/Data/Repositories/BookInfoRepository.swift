@@ -1,21 +1,20 @@
 //
-//  BookInfoRepository.swift
+//  POIInfoRepository.swift
 //  iOSPhotoBrowser
 //
 
 import Foundation
 import CoreData
 
-final class BookInfoRepository: BookInfoRepositoryProtocol {
+final class POIInfoRepository: POIInfoRepositoryProtocol {
     private let context: NSManagedObjectContext
 
     init(context: NSManagedObjectContext) {
         self.context = context
     }
 
-    func save(_ bookInfo: BookInfo, for imageId: UUID) async throws {
+    func save(_ poiInfo: POIInfo, for imageId: UUID) async throws {
         try await context.perform {
-            // Find the image entity
             let imageRequest = ImageEntity.fetchRequest()
             imageRequest.predicate = NSPredicate(format: "id == %@", imageId as CVarArg)
             imageRequest.fetchLimit = 1
@@ -24,62 +23,67 @@ final class BookInfoRepository: BookInfoRepositoryProtocol {
                 throw RepositoryError.notFound
             }
 
-            // Create new BookInfoEntity
-            let entity = BookInfoEntity(context: self.context)
-            entity.id = bookInfo.id
-            entity.isbn = bookInfo.isbn
-            entity.title = bookInfo.title
-            entity.author = bookInfo.author
-            entity.publisher = bookInfo.publisher
-            entity.publishedDate = bookInfo.publishedDate
-            entity.coverUrl = bookInfo.coverUrl
-            entity.category = bookInfo.category
-            entity.readingStatus = bookInfo.readingStatus.rawValue
-            entity.ownershipStatus = bookInfo.ownershipStatus.rawValue
-            entity.createdAt = bookInfo.createdAt
-            entity.updatedAt = bookInfo.updatedAt
+            let entity = POIInfoEntity(context: self.context)
+            entity.id = poiInfo.id
+            entity.name = poiInfo.name
+            entity.address = poiInfo.address
+            entity.phoneNumber = poiInfo.phoneNumber
+            entity.businessHours = poiInfo.businessHours
+            entity.websiteUrl = poiInfo.websiteUrl
+            entity.category = poiInfo.category
+            entity.priceRange = poiInfo.priceRange
+            entity.notes = poiInfo.notes
+            entity.rating = poiInfo.rating
+            entity.visitStatus = poiInfo.visitStatus.rawValue
+            entity.latitude = poiInfo.latitude ?? 0
+            entity.longitude = poiInfo.longitude ?? 0
+            entity.createdAt = poiInfo.createdAt
+            entity.updatedAt = poiInfo.updatedAt
 
-            // Set relationship
             entity.image = imageEntity
-            imageEntity.bookInfo = entity
+            imageEntity.poiInfo = entity
 
             try self.context.save()
         }
     }
 
-    func fetch(for imageId: UUID) async throws -> BookInfo? {
+    func fetch(for imageId: UUID) async throws -> POIInfo? {
         try await context.perform {
             let imageRequest = ImageEntity.fetchRequest()
             imageRequest.predicate = NSPredicate(format: "id == %@", imageId as CVarArg)
             imageRequest.fetchLimit = 1
 
             guard let imageEntity = try self.context.fetch(imageRequest).first,
-                  let bookInfoEntity = imageEntity.bookInfo else {
+                  let poiInfoEntity = imageEntity.poiInfo else {
                 return nil
             }
 
-            return self.toBookInfo(bookInfoEntity)
+            return self.toPOIInfo(poiInfoEntity)
         }
     }
 
-    func update(_ bookInfo: BookInfo) async throws {
+    func update(_ poiInfo: POIInfo) async throws {
         try await context.perform {
-            let request = BookInfoEntity.fetchRequest()
-            request.predicate = NSPredicate(format: "id == %@", bookInfo.id as CVarArg)
+            let request = POIInfoEntity.fetchRequest()
+            request.predicate = NSPredicate(format: "id == %@", poiInfo.id as CVarArg)
             request.fetchLimit = 1
 
             guard let entity = try self.context.fetch(request).first else {
                 throw RepositoryError.notFound
             }
 
-            entity.title = bookInfo.title
-            entity.author = bookInfo.author
-            entity.publisher = bookInfo.publisher
-            entity.publishedDate = bookInfo.publishedDate
-            entity.coverUrl = bookInfo.coverUrl
-            entity.category = bookInfo.category
-            entity.readingStatus = bookInfo.readingStatus.rawValue
-            entity.ownershipStatus = bookInfo.ownershipStatus.rawValue
+            entity.name = poiInfo.name
+            entity.address = poiInfo.address
+            entity.phoneNumber = poiInfo.phoneNumber
+            entity.businessHours = poiInfo.businessHours
+            entity.websiteUrl = poiInfo.websiteUrl
+            entity.category = poiInfo.category
+            entity.priceRange = poiInfo.priceRange
+            entity.notes = poiInfo.notes
+            entity.rating = poiInfo.rating
+            entity.visitStatus = poiInfo.visitStatus.rawValue
+            entity.latitude = poiInfo.latitude ?? 0
+            entity.longitude = poiInfo.longitude ?? 0
             entity.updatedAt = Date()
 
             try self.context.save()
@@ -93,29 +97,32 @@ final class BookInfoRepository: BookInfoRepositoryProtocol {
             imageRequest.fetchLimit = 1
 
             guard let imageEntity = try self.context.fetch(imageRequest).first,
-                  let bookInfoEntity = imageEntity.bookInfo else {
+                  let poiInfoEntity = imageEntity.poiInfo else {
                 return
             }
 
-            self.context.delete(bookInfoEntity)
+            self.context.delete(poiInfoEntity)
             try self.context.save()
         }
     }
 
     // MARK: - Private Helpers
 
-    private func toBookInfo(_ entity: BookInfoEntity) -> BookInfo {
-        BookInfo(
+    private func toPOIInfo(_ entity: POIInfoEntity) -> POIInfo {
+        POIInfo(
             id: entity.id ?? UUID(),
-            isbn: entity.isbn ?? "",
-            title: entity.title,
-            author: entity.author,
-            publisher: entity.publisher,
-            publishedDate: entity.publishedDate,
-            coverUrl: entity.coverUrl,
+            name: entity.name,
+            address: entity.address,
+            phoneNumber: entity.phoneNumber,
+            businessHours: entity.businessHours,
+            websiteUrl: entity.websiteUrl,
             category: entity.category,
-            readingStatus: ReadingStatus(rawValue: entity.readingStatus) ?? .unread,
-            ownershipStatus: OwnershipStatus(rawValue: entity.ownershipStatus) ?? .notOwned,
+            priceRange: entity.priceRange,
+            notes: entity.notes,
+            rating: entity.rating,
+            visitStatus: VisitStatus(rawValue: entity.visitStatus) ?? .wantToVisit,
+            latitude: entity.latitude == 0 ? nil : entity.latitude,
+            longitude: entity.longitude == 0 ? nil : entity.longitude,
             createdAt: entity.createdAt ?? Date(),
             updatedAt: entity.updatedAt ?? Date()
         )

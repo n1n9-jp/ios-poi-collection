@@ -116,7 +116,7 @@ actor LlamaService: LLMServiceProtocol {
         print("[\(serviceName)] Model unloaded")
     }
 
-    func extractBookInfo(from ocrText: String) async throws -> ExtractedBookData {
+    func extractPOIInfo(from ocrText: String) async throws -> ExtractedPOIData {
         if !isModelLoaded {
             try await loadModel()
         }
@@ -128,13 +128,15 @@ actor LlamaService: LLMServiceProtocol {
 
         // Gemma 2B Instruct用のプロンプト形式
         let userPrompt = """
-        以下はOCRで読み取った本のテキストです。書籍情報をJSON形式で出力してください。
+        以下はOCRで読み取ったレストランや店舗の看板テキストです。スポット情報を推論してJSON形式で出力してください。
+        重要: OCRは行ごとにテキストを分割します。店名+支店名、住所の断片など、複数行にわたる情報は結合してください。
+        例: 「アパ社長カレー」「横浜ベイタワー店」→ name: "アパ社長カレー 横浜ベイタワー店"
 
         OCRテキスト:
         \(ocrText)
 
         以下のJSON形式のみを出力してください（他の説明は不要）:
-        {"title": "タイトル", "author": "著者", "publisher": "出版社", "isbn": "ISBN13桁"}
+        {"name": "施設名（店名+支店名を結合）", "address": "住所", "phone": "電話番号", "hours": "営業時間", "category": "カテゴリ", "priceRange": "価格帯"}
         見つからない項目はnullにしてください。
         """
 
@@ -248,7 +250,7 @@ actor LlamaService: LLMServiceProtocol {
 
     // MARK: - Private Helpers
 
-    private func parseJSONResponse(_ response: String) -> ExtractedBookData {
+    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
         var jsonString = response
 
         // マークダウンコードブロックを除去
@@ -275,78 +277,78 @@ actor LlamaService: LLMServiceProtocol {
             return extractFromPlainText(response)
         }
 
-        let title = json["title"] as? String
-        let author = json["author"] as? String
-        let publisher = json["publisher"] as? String
-        var isbn = json["isbn"] as? String
-
-        // ISBNのクリーニング
-        if let rawISBN = isbn {
-            isbn = rawISBN.filter { $0.isNumber }
-            if isbn?.count != 13 {
-                isbn = nil
-            }
-        }
+        let name = json["name"] as? String
+        let address = json["address"] as? String
+        let phone = json["phone"] as? String
+        let hours = json["hours"] as? String
+        let category = json["category"] as? String
+        let priceRange = json["priceRange"] as? String
 
         // 信頼度スコアを計算
         var confidence = 0.0
         var fields = 0
-        if title != nil && !title!.isEmpty { fields += 1 }
-        if author != nil && !author!.isEmpty { fields += 1 }
-        if publisher != nil && !publisher!.isEmpty { fields += 1 }
-        if isbn != nil { fields += 2 }
-        confidence = Double(fields) / 5.0
+        if name != nil && !name!.isEmpty { fields += 1 }
+        if address != nil && !address!.isEmpty { fields += 1 }
+        if phone != nil && !phone!.isEmpty { fields += 1 }
+        if hours != nil && !hours!.isEmpty { fields += 1 }
+        if category != nil && !category!.isEmpty { fields += 1 }
+        if priceRange != nil && !priceRange!.isEmpty { fields += 1 }
+        confidence = Double(fields) / 6.0
 
-        return ExtractedBookData(
-            title: title,
-            author: author,
-            publisher: publisher,
-            isbn: isbn,
+        return ExtractedPOIData(
+            name: name,
+            address: address,
+            phoneNumber: phone,
+            businessHours: hours,
+            category: category,
+            priceRange: priceRange,
             confidence: confidence
         )
     }
 
     /// JSONパース失敗時のフォールバック
-    private func extractFromPlainText(_ text: String) -> ExtractedBookData {
-        var title: String?
-        var author: String?
-        var isbn: String?
+    private func extractFromPlainText(_ text: String) -> ExtractedPOIData {
+        var name: String?
+        var address: String?
+        var phone: String?
 
-        // タイトルパターン
-        let titlePatterns = ["タイトル[：:]\\s*(.+)", "\"title\"\\s*:\\s*\"([^\"]+)\""]
-        for pattern in titlePatterns {
+        // 施設名パターン
+        let namePatterns = ["施設名[：:]\\s*(.+)", "店名[：:]\\s*(.+)", "\"name\"\\s*:\\s*\"([^\"]+)\""]
+        for pattern in namePatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
                let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                let range = Range(match.range(at: 1), in: text) {
-                title = String(text[range]).trimmingCharacters(in: .whitespaces)
+                name = String(text[range]).trimmingCharacters(in: .whitespaces)
                 break
             }
         }
 
-        // 著者パターン
-        let authorPatterns = ["著者[：:]\\s*(.+)", "\"author\"\\s*:\\s*\"([^\"]+)\""]
-        for pattern in authorPatterns {
+        // 住所パターン
+        let addressPatterns = ["住所[：:]\\s*(.+)", "\"address\"\\s*:\\s*\"([^\"]+)\""]
+        for pattern in addressPatterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
                let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
                let range = Range(match.range(at: 1), in: text) {
-                author = String(text[range]).trimmingCharacters(in: .whitespaces)
+                address = String(text[range]).trimmingCharacters(in: .whitespaces)
                 break
             }
         }
 
-        // ISBN-13パターン
-        let isbnPattern = "97[89]\\d{10}"
-        if let regex = try? NSRegularExpression(pattern: isbnPattern),
-           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-           let range = Range(match.range, in: text) {
-            isbn = String(text[range])
+        // 電話番号パターン
+        let phonePatterns = ["電話[：:]\\s*(.+)", "TEL[：:]\\s*(.+)", "\"phone\"\\s*:\\s*\"([^\"]+)\""]
+        for pattern in phonePatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+               let range = Range(match.range(at: 1), in: text) {
+                phone = String(text[range]).trimmingCharacters(in: .whitespaces)
+                break
+            }
         }
 
-        return ExtractedBookData(
-            title: title,
-            author: author,
-            publisher: nil,
-            isbn: isbn,
+        return ExtractedPOIData(
+            name: name,
+            address: address,
+            phoneNumber: phone,
             confidence: 0.3
         )
     }

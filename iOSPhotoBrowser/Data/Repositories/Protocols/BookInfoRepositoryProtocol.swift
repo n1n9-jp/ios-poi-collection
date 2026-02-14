@@ -1,13 +1,13 @@
 //
-//  BookInfoRepositoryProtocol.swift
+//  POIInfoRepositoryProtocol.swift
 //  iOSPhotoBrowser
 //
 
 import Foundation
 
-protocol BookInfoRepositoryProtocol {
-    func save(_ bookInfo: BookInfo, for imageId: UUID) async throws
-    func fetch(for imageId: UUID) async throws -> BookInfo?
-    func update(_ bookInfo: BookInfo) async throws
+protocol POIInfoRepositoryProtocol {
+    func save(_ poiInfo: POIInfo, for imageId: UUID) async throws
+    func fetch(for imageId: UUID) async throws -> POIInfo?
+    func update(_ poiInfo: POIInfo) async throws
     func delete(for imageId: UUID) async throws
 }

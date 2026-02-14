@@ -22,43 +22,34 @@ final class DetailViewModel: ObservableObject {
     // OCR関連
     @Published private(set) var isProcessingOCR = false
     @Published private(set) var ocrMessage: String?
-    @Published var showingBookInfoEditor = false
-    @Published var editingBookInfo: BookInfo?
-
-    // タイトル検索関連
-    @Published var showingTitleSearchSheet = false
-    @Published var showingSearchResults = false
-    @Published var searchKeyword = ""
-    @Published private(set) var searchResults: [BookInfo] = []
-    @Published private(set) var isSearching = false
+    @Published var showingPOIInfoEditor = false
+    @Published var editingPOIInfo: POIInfo?
+    @Published var isCreatingNewPOI = false
 
     let photoId: UUID
     private let imageRepository: ImageRepositoryProtocol
     private let tagRepository: TagRepositoryProtocol
     private let albumRepository: AlbumRepositoryProtocol
-    private let bookInfoRepository: BookInfoRepositoryProtocol
+    private let poiInfoRepository: POIInfoRepositoryProtocol
     private let deleteImageUseCase: DeleteImageUseCase
     private let ocrService: OCRService
-    private let bookInfoService: BookInfoService
 
     init(
         photoId: UUID,
         imageRepository: ImageRepositoryProtocol,
         tagRepository: TagRepositoryProtocol,
         albumRepository: AlbumRepositoryProtocol,
-        bookInfoRepository: BookInfoRepositoryProtocol,
+        poiInfoRepository: POIInfoRepositoryProtocol,
         deleteImageUseCase: DeleteImageUseCase,
-        ocrService: OCRService,
-        bookInfoService: BookInfoService
+        ocrService: OCRService
     ) {
         self.photoId = photoId
         self.imageRepository = imageRepository
         self.tagRepository = tagRepository
         self.albumRepository = albumRepository
-        self.bookInfoRepository = bookInfoRepository
+        self.poiInfoRepository = poiInfoRepository
         self.deleteImageUseCase = deleteImageUseCase
         self.ocrService = ocrService
-        self.bookInfoService = bookInfoService
     }
 
     func loadPhoto() async {
@@ -150,9 +141,9 @@ final class DetailViewModel: ObservableObject {
         photo?.albums.contains { $0.id == album.id } ?? false
     }
 
-    // MARK: - OCR & Book Info
+    // MARK: - OCR & POI Info
 
-    func performOCRAndFetchBookInfo() async {
+    func performOCRAndExtractPOIInfo() async {
         guard let image = loadImage() else {
             ocrMessage = "画像の読み込みに失敗しました"
             return
@@ -163,8 +154,8 @@ final class DetailViewModel: ObservableObject {
         defer { isProcessingOCR = false }
 
         do {
-            // Step 1: OCR + LLM（利用可能な場合）で書籍情報を抽出
-            let (bookData, extractedText, usedLLM) = try await ocrService.extractBookInfoBestEffort(from: image)
+            // Step 1: OCR + LLM（利用可能な場合）でスポット情報を抽出
+            let (poiData, extractedText, usedLLM) = try await ocrService.extractPOIInfoBestEffort(from: image)
 
             // Save extracted text
             try await imageRepository.updateExtractedText(
@@ -175,52 +166,28 @@ final class DetailViewModel: ObservableObject {
 
             await loadPhoto()
 
-            // Step 2: ISBNがある場合はopenBD APIで詳細情報を取得
-            if let isbn = bookData.isbn, bookData.hasValidISBN {
-                if let apiBookInfo = try await bookInfoService.fetchBookInfo(isbn: isbn) {
-                    // APIから取得した情報を保存
-                    try await bookInfoRepository.save(apiBookInfo, for: photoId)
-                    ocrMessage = usedLLM ? nil : "書誌情報を取得しました"
-                    await loadPhoto()
-                    return
-                } else if usedLLM && bookData.hasValidData {
-                    // APIで見つからなかったが、LLMがタイトル等を抽出した場合
-                    // LLMの結果を使って仮の書誌情報を作成
-                    let llmBookInfo = BookInfo(
-                        id: UUID(),
-                        isbn: isbn,
-                        title: bookData.title,
-                        author: bookData.author,
-                        publisher: bookData.publisher,
-                        publishedDate: nil,
-                        coverUrl: nil,
-                        category: nil,
-                        readingStatus: .unread,
-                        ownershipStatus: .notOwned,
-                        createdAt: Date(),
-                        updatedAt: Date()
-                    )
-                    try await bookInfoRepository.save(llmBookInfo, for: photoId)
-                    ocrMessage = "AIが抽出した情報を保存しました（API未確認）"
-                    await loadPhoto()
-                    return
-                } else {
-                    ocrMessage = "書誌情報が見つかりませんでした（ISBN: \(isbn)）"
-                }
-            } else if usedLLM && bookData.hasValidData {
-                // ISBNはないが、LLMがタイトル等を抽出した場合
-                // タイトルで検索を提案、または直接保存
-                if let title = bookData.title {
-                    searchKeyword = title
-                    ocrMessage = "ISBNが検出できませんでした。タイトル「\(title)」で検索しますか？"
-                    showingTitleSearchSheet = true
-                    return
-                }
+            // Step 2: 抽出データから POIInfo を作成して保存
+            if usedLLM && poiData.hasValidData {
+                let poiInfo = POIInfo(
+                    id: UUID(),
+                    name: poiData.name,
+                    address: poiData.address,
+                    phoneNumber: poiData.phoneNumber,
+                    businessHours: poiData.businessHours,
+                    category: poiData.category,
+                    priceRange: poiData.priceRange,
+                    visitStatus: .wantToVisit,
+                    createdAt: Date(),
+                    updatedAt: Date()
+                )
+                try await poiInfoRepository.save(poiInfo, for: photoId)
+                ocrMessage = nil
+                await loadPhoto()
+                return
             }
 
-            // ISBN not found or book info not found - show title search sheet
-            ocrMessage = "ISBNが検出できませんでした。タイトルで検索してください。"
-            showingTitleSearchSheet = true
+            // 有効なデータが取得できなかった場合
+            ocrMessage = "スポット情報を抽出できませんでした。"
 
         } catch {
             self.error = error
@@ -228,71 +195,42 @@ final class DetailViewModel: ObservableObject {
         }
     }
 
-    func startEditingBookInfo() {
-        guard let bookInfo = photo?.bookInfo else { return }
-        editingBookInfo = bookInfo
-        showingBookInfoEditor = true
+    func startEditingPOIInfo() {
+        guard let poiInfo = photo?.poiInfo else { return }
+        editingPOIInfo = poiInfo
+        isCreatingNewPOI = false
+        showingPOIInfoEditor = true
     }
 
-    func updateBookInfo() async {
-        guard let bookInfo = editingBookInfo else { return }
+    /// 抽出テキストを参考にして手動でスポット情報を新規作成
+    func startCreatingPOIInfo() {
+        let name = photo?.extractedText?
+            .components(separatedBy: .newlines)
+            .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+
+        editingPOIInfo = POIInfo(
+            id: UUID(),
+            name: name,
+            visitStatus: .wantToVisit,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        isCreatingNewPOI = true
+        showingPOIInfoEditor = true
+    }
+
+    func savePOIInfo() async {
+        guard let poiInfo = editingPOIInfo else { return }
 
         do {
-            try await bookInfoRepository.update(bookInfo)
-            showingBookInfoEditor = false
-            editingBookInfo = nil
-            await loadPhoto()
-        } catch {
-            self.error = error
-            showingError = true
-        }
-    }
-
-    func deleteBookInfo() async {
-        do {
-            try await bookInfoRepository.delete(for: photoId)
-            await loadPhoto()
-        } catch {
-            self.error = error
-            showingError = true
-        }
-    }
-
-    // MARK: - Title Search
-
-    func startTitleSearch() {
-        searchKeyword = ""
-        searchResults = []
-        showingTitleSearchSheet = true
-    }
-
-    func searchByTitle() async {
-        let keyword = searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else { return }
-
-        isSearching = true
-        defer { isSearching = false }
-
-        do {
-            searchResults = try await bookInfoService.searchByTitle(keyword: keyword)
-            if searchResults.isEmpty {
-                ocrMessage = "「\(keyword)」に一致する書籍が見つかりませんでした"
+            if isCreatingNewPOI {
+                try await poiInfoRepository.save(poiInfo, for: photoId)
             } else {
-                showingTitleSearchSheet = false
-                showingSearchResults = true
+                try await poiInfoRepository.update(poiInfo)
             }
-        } catch {
-            self.error = error
-            showingError = true
-        }
-    }
-
-    func selectBookInfo(_ bookInfo: BookInfo) async {
-        do {
-            try await bookInfoRepository.save(bookInfo, for: photoId)
-            showingSearchResults = false
-            searchResults = []
-            searchKeyword = ""
+            showingPOIInfoEditor = false
+            editingPOIInfo = nil
+            isCreatingNewPOI = false
             ocrMessage = nil
             await loadPhoto()
         } catch {
@@ -301,10 +239,66 @@ final class DetailViewModel: ObservableObject {
         }
     }
 
-    func cancelTitleSearch() {
-        showingTitleSearchSheet = false
-        showingSearchResults = false
-        searchResults = []
-        searchKeyword = ""
+    func deletePOIInfo() async {
+        do {
+            try await poiInfoRepository.delete(for: photoId)
+            await loadPhoto()
+        } catch {
+            self.error = error
+            showingError = true
+        }
+    }
+
+    /// 既存の抽出テキストからスポット情報を生成（OCRを再実行しない）
+    /// ルールベース + LLMのハイブリッドで抽出し、失敗時は手動作成エディタを開く
+    func generatePOIInfoFromExtractedText() async {
+        guard let extractedText = photo?.extractedText, !extractedText.isEmpty else {
+            ocrMessage = "抽出テキストがありません"
+            return
+        }
+
+        isProcessingOCR = true
+        ocrMessage = nil
+
+        // Step 1: ルールベースで基本抽出（常に実行）
+        let ruleResult = OCRService.extractPOIInfoByRules(from: extractedText)
+
+        // Step 2: LLMが利用可能なら追加で抽出してマージ
+        var finalResult = ruleResult
+        let llmAvailable = await LLMService.shared.isAnyServiceAvailable()
+        if llmAvailable {
+            let llmResult = await LLMService.shared.extractPOIInfoOrEmpty(from: extractedText)
+            finalResult = OCRService.mergeExtractedData(rule: ruleResult, llm: llmResult)
+        }
+
+        isProcessingOCR = false
+
+        if finalResult.hasValidData {
+            do {
+                let poiInfo = POIInfo(
+                    id: UUID(),
+                    name: finalResult.name,
+                    address: finalResult.address,
+                    phoneNumber: finalResult.phoneNumber,
+                    businessHours: finalResult.businessHours,
+                    category: finalResult.category,
+                    priceRange: finalResult.priceRange,
+                    visitStatus: .wantToVisit,
+                    createdAt: Date(),
+                    updatedAt: Date()
+                )
+                try await poiInfoRepository.save(poiInfo, for: photoId)
+                ocrMessage = nil
+                await loadPhoto()
+                return
+            } catch {
+                self.error = error
+                showingError = true
+                return
+            }
+        }
+
+        // ルールベースもLLMも失敗 → 手動作成エディタを開く
+        startCreatingPOIInfo()
     }
 }

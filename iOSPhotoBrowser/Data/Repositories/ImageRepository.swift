@@ -115,14 +115,12 @@ final class ImageRepository: ImageRepositoryProtocol {
     func search(query: String) async throws -> [PhotoItem] {
         try await context.perform {
             let request = ImageEntity.fetchRequest()
-            // Search in: tags, extractedText, bookInfo (title, author, publisher, isbn)
             let predicates: [NSPredicate] = [
                 NSPredicate(format: "ANY tags.name CONTAINS[cd] %@", query),
                 NSPredicate(format: "extractedText CONTAINS[cd] %@", query),
-                NSPredicate(format: "bookInfo.title CONTAINS[cd] %@", query),
-                NSPredicate(format: "bookInfo.author CONTAINS[cd] %@", query),
-                NSPredicate(format: "bookInfo.publisher CONTAINS[cd] %@", query),
-                NSPredicate(format: "bookInfo.isbn CONTAINS[cd] %@", query)
+                NSPredicate(format: "poiInfo.name CONTAINS[cd] %@", query),
+                NSPredicate(format: "poiInfo.address CONTAINS[cd] %@", query),
+                NSPredicate(format: "poiInfo.category CONTAINS[cd] %@", query)
             ]
             request.predicate = NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
             request.sortDescriptors = [NSSortDescriptor(key: "importedAt", ascending: false)]
@@ -154,21 +152,24 @@ final class ImageRepository: ImageRepositoryProtocol {
             )
         } ?? []
 
-        var bookInfo: BookInfo?
-        if let bookInfoEntity = entity.bookInfo {
-            bookInfo = BookInfo(
-                id: bookInfoEntity.id ?? UUID(),
-                isbn: bookInfoEntity.isbn ?? "",
-                title: bookInfoEntity.title,
-                author: bookInfoEntity.author,
-                publisher: bookInfoEntity.publisher,
-                publishedDate: bookInfoEntity.publishedDate,
-                coverUrl: bookInfoEntity.coverUrl,
-                category: bookInfoEntity.category,
-                readingStatus: ReadingStatus(rawValue: bookInfoEntity.readingStatus) ?? .unread,
-                ownershipStatus: OwnershipStatus(rawValue: bookInfoEntity.ownershipStatus) ?? .notOwned,
-                createdAt: bookInfoEntity.createdAt ?? Date(),
-                updatedAt: bookInfoEntity.updatedAt ?? Date()
+        var poiInfo: POIInfo?
+        if let poiInfoEntity = entity.poiInfo {
+            poiInfo = POIInfo(
+                id: poiInfoEntity.id ?? UUID(),
+                name: poiInfoEntity.name,
+                address: poiInfoEntity.address,
+                phoneNumber: poiInfoEntity.phoneNumber,
+                businessHours: poiInfoEntity.businessHours,
+                websiteUrl: poiInfoEntity.websiteUrl,
+                category: poiInfoEntity.category,
+                priceRange: poiInfoEntity.priceRange,
+                notes: poiInfoEntity.notes,
+                rating: poiInfoEntity.rating,
+                visitStatus: VisitStatus(rawValue: poiInfoEntity.visitStatus) ?? .wantToVisit,
+                latitude: poiInfoEntity.latitude == 0 ? nil : poiInfoEntity.latitude,
+                longitude: poiInfoEntity.longitude == 0 ? nil : poiInfoEntity.longitude,
+                createdAt: poiInfoEntity.createdAt ?? Date(),
+                updatedAt: poiInfoEntity.updatedAt ?? Date()
             )
         }
 
@@ -191,7 +192,7 @@ final class ImageRepository: ImageRepositoryProtocol {
             albums: albums,
             extractedText: entity.extractedText,
             ocrProcessedAt: entity.ocrProcessedAt,
-            bookInfo: bookInfo
+            poiInfo: poiInfo
         )
     }
 

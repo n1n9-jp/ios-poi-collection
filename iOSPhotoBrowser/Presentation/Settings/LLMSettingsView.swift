@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 struct LLMSettingsView: View {
     @StateObject private var modelManager = LLMModelManager.shared
     @StateObject private var vlmModelManager = VLMModelManager.shared
+    @StateObject private var cloudAPIManager = CloudAPIKeyManager.shared
     @State private var enginePreference: LLMEnginePreference = .auto
     @State private var showingDeleteConfirmation = false
     @State private var showingDownloadConfirmation = false
@@ -18,6 +19,10 @@ struct LLMSettingsView: View {
     @State private var showingError = false
     @State private var importSuccessMessage: String?
     @State private var showingImportSuccess = false
+    @State private var apiKeyInput = ""
+    @State private var isTestingAPI = false
+    @State private var apiTestResult: String?
+    @State private var showingAPITestResult = false
 
     var body: some View {
         List {
@@ -38,6 +43,76 @@ struct LLMSettingsView: View {
                 Text("AI処理設定")
             } footer: {
                 Text(enginePreference.description)
+            }
+
+            // MARK: - クラウドAPI
+            Section {
+                HStack {
+                    Label("Claude API", systemImage: "cloud")
+                    Spacer()
+                    if cloudAPIManager.isConfigured {
+                        Text("設定済み")
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("未設定")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                SecureField("APIキー (sk-ant-...)", text: $apiKeyInput)
+                    .textContentType(.password)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .onSubmit { saveAPIKey() }
+
+                if !apiKeyInput.isEmpty || cloudAPIManager.isConfigured {
+                    HStack {
+                        Button {
+                            saveAPIKey()
+                        } label: {
+                            Text("保存")
+                        }
+                        .disabled(apiKeyInput.isEmpty)
+
+                        if cloudAPIManager.isConfigured {
+                            Spacer()
+                            Button(role: .destructive) {
+                                apiKeyInput = ""
+                                cloudAPIManager.apiKey = nil
+                            } label: {
+                                Text("削除")
+                            }
+                        }
+                    }
+                }
+
+                if cloudAPIManager.isConfigured {
+                    Picker("モデル", selection: Binding(
+                        get: { cloudAPIManager.selectedModel },
+                        set: { cloudAPIManager.saveModel($0) }
+                    )) {
+                        ForEach(CloudLLMModel.allCases, id: \.self) { model in
+                            Text(model.displayName).tag(model)
+                        }
+                    }
+
+                    Button {
+                        testAPIKey()
+                    } label: {
+                        HStack {
+                            Label("接続テスト", systemImage: "checkmark.circle")
+                            if isTestingAPI {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isTestingAPI)
+                }
+            } header: {
+                Text("クラウドAPI（高精度・推奨）")
+            } footer: {
+                Text("Claude APIを使用して高精度なスポット情報抽出を行います。画像から直接認識するため、OCRの誤りに影響されません。APIキーはconsole.anthropic.comで取得できます。")
             }
 
             // MARK: - Apple Intelligence
@@ -288,6 +363,12 @@ struct LLMSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             enginePreference = modelManager.enginePreference
+            // APIキーの先頭と末尾だけ表示
+            if let key = cloudAPIManager.apiKey, !key.isEmpty {
+                let prefix = String(key.prefix(10))
+                let suffix = String(key.suffix(4))
+                apiKeyInput = "\(prefix)...\(suffix)"
+            }
         }
         .confirmationDialog(
             "モデルを削除しますか？",
@@ -329,6 +410,11 @@ struct LLMSettingsView: View {
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("VLMモデルを削除すると、再度使用するには手動でダウンロードが必要です。")
+        }
+        .alert("接続テスト", isPresented: $showingAPITestResult) {
+            Button("OK") {}
+        } message: {
+            Text(apiTestResult ?? "")
         }
         .fileImporter(
             isPresented: $showingVLMImportPicker,
@@ -403,6 +489,35 @@ struct LLMSettingsView: View {
         }
     }
 
+    private func saveAPIKey() {
+        let key = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        // マスクされた表示値の場合は保存しない
+        guard !key.isEmpty, !key.contains("...") else { return }
+        cloudAPIManager.apiKey = key
+        // 保存後はマスク表示に切り替え
+        let prefix = String(key.prefix(10))
+        let suffix = String(key.suffix(4))
+        apiKeyInput = "\(prefix)...\(suffix)"
+    }
+
+    private func testAPIKey() {
+        isTestingAPI = true
+        Task {
+            do {
+                let result = try await LLMService.shared.extractPOIInfo(from: "テスト: 東京カフェ\n東京都渋谷区1-2-3\nTEL: 03-1234-5678")
+                if result.hasValidData {
+                    apiTestResult = "接続成功！ 抽出結果: \(result.name ?? "名前なし")"
+                } else {
+                    apiTestResult = "接続成功（データ抽出なし）"
+                }
+            } catch {
+                apiTestResult = "接続失敗: \(error.localizedDescription)"
+            }
+            isTestingAPI = false
+            showingAPITestResult = true
+        }
+    }
+
     private func startVLMDownload() {
         Task {
             do {
@@ -427,6 +542,17 @@ struct LLMInfoView: View {
             Section("概要") {
                 Text("このアプリでは、本の表紙や奥付からOCRで読み取ったテキストを、AIを使って解析し、タイトル・著者名・ISBNなどの書籍情報を自動抽出します。")
                     .font(.body)
+            }
+
+            Section("クラウドAPI (Claude)") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Anthropic社のClaude APIを使用した高精度な情報抽出です。")
+                    Text("• 画像から直接スポット情報を認識（最高精度）")
+                    Text("• 日本語の看板・メニューに強い")
+                    Text("• APIキーと通信が必要")
+                    Text("• 従量課金（1回あたり約0.5〜3円）")
+                }
+                .font(.body)
             }
 
             Section("Apple Intelligence") {
@@ -463,8 +589,11 @@ struct LLMInfoView: View {
             }
 
             Section("プライバシー") {
-                Text("すべてのAI処理は端末内で完結します。画像やテキストがインターネットに送信されることはありません。")
-                    .font(.body)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("ローカルモデル・VLM・Apple Intelligenceは端末内で処理が完結します。")
+                    Text("クラウドAPIを使用する場合、画像やテキストがAnthropicのサーバーに送信されます。Anthropicはユーザーデータをモデルのトレーニングに使用しません。")
+                }
+                .font(.body)
             }
         }
         .navigationTitle("LLMについて")

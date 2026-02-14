@@ -24,7 +24,7 @@ struct PhotoItem: Identifiable, Hashable {
     var albums: [Album]
     var extractedText: String?
     var ocrProcessedAt: Date?
-    var bookInfo: BookInfo?
+    var poiInfo: POIInfo?
 
     init(
         id: UUID = UUID(),
@@ -45,7 +45,7 @@ struct PhotoItem: Identifiable, Hashable {
         albums: [Album] = [],
         extractedText: String? = nil,
         ocrProcessedAt: Date? = nil,
-        bookInfo: BookInfo? = nil
+        poiInfo: POIInfo? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -65,7 +65,7 @@ struct PhotoItem: Identifiable, Hashable {
         self.albums = albums
         self.extractedText = extractedText
         self.ocrProcessedAt = ocrProcessedAt
-        self.bookInfo = bookInfo
+        self.poiInfo = poiInfo
     }
 }
 
@@ -90,7 +90,7 @@ extension PhotoItem {
         ocrProcessedAt != nil
     }
 
-    var hasBookInfo: Bool {
-        bookInfo != nil
+    var hasPOIInfo: Bool {
+        poiInfo != nil
     }
 }

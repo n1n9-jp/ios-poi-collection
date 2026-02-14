@@ -7,38 +7,37 @@ import Foundation
 
 // MARK: - Extracted Data Model
 
-/// LLMが抽出した書籍情報
-struct ExtractedBookData: Sendable {
-    var title: String?
-    var author: String?
-    var publisher: String?
-    var isbn: String?
+/// LLMが抽出したスポット情報
+struct ExtractedPOIData: Sendable {
+    var name: String?
+    var address: String?
+    var phoneNumber: String?
+    var businessHours: String?
+    var category: String?
+    var priceRange: String?
     var confidence: Double  // 0.0-1.0 の信頼度スコア
 
     init(
-        title: String? = nil,
-        author: String? = nil,
-        publisher: String? = nil,
-        isbn: String? = nil,
+        name: String? = nil,
+        address: String? = nil,
+        phoneNumber: String? = nil,
+        businessHours: String? = nil,
+        category: String? = nil,
+        priceRange: String? = nil,
         confidence: Double = 0.0
     ) {
-        self.title = title
-        self.author = author
-        self.publisher = publisher
-        self.isbn = isbn
+        self.name = name
+        self.address = address
+        self.phoneNumber = phoneNumber
+        self.businessHours = businessHours
+        self.category = category
+        self.priceRange = priceRange
         self.confidence = confidence
     }
 
     /// 有効なデータが含まれているかどうか
     var hasValidData: Bool {
-        title != nil || author != nil || isbn != nil
-    }
-
-    /// ISBNが有効な形式かチェック
-    var hasValidISBN: Bool {
-        guard let isbn = isbn else { return false }
-        let cleanISBN = isbn.filter { $0.isNumber }
-        return cleanISBN.count == 13 && (cleanISBN.hasPrefix("978") || cleanISBN.hasPrefix("979"))
+        name != nil || address != nil
     }
 }
 
@@ -47,8 +46,8 @@ struct ExtractedBookData: Sendable {
 /// LLMサービスのプロトコル
 /// 各LLM実装（Apple Foundation Models、llama.cpp）はこのプロトコルに準拠する
 protocol LLMServiceProtocol {
-    /// OCRテキストから書籍情報を抽出
-    func extractBookInfo(from ocrText: String) async throws -> ExtractedBookData
+    /// OCRテキストからスポット情報を抽出
+    func extractPOIInfo(from ocrText: String) async throws -> ExtractedPOIData
 
     /// サービスが利用可能かどうか
     var isAvailable: Bool { get async }
@@ -62,10 +61,10 @@ protocol LLMServiceProtocol {
 import UIKit
 
 /// Vision Language Model サービスのプロトコル
-/// 画像から直接書籍情報を抽出（OCR不要）
+/// 画像から直接スポット情報を抽出（OCR不要）
 protocol VLMServiceProtocol {
-    /// 画像から書籍情報を抽出
-    func extractBookInfo(from image: UIImage) async throws -> ExtractedBookData
+    /// 画像からスポット情報を抽出
+    func extractPOIInfo(from image: UIImage) async throws -> ExtractedPOIData
 
     /// サービスが利用可能かどうか
     var isAvailable: Bool { get async }
@@ -97,7 +96,7 @@ enum LLMError: Error, LocalizedError {
         case .modelNotLoaded:
             return "モデルが読み込まれていません"
         case .extractionFailed(let reason):
-            return "書籍情報の抽出に失敗しました: \(reason)"
+            return "スポット情報の抽出に失敗しました: \(reason)"
         case .invalidResponse:
             return "無効なレスポンスです"
         case .downloadFailed(let reason):
@@ -113,6 +112,7 @@ enum LLMError: Error, LocalizedError {
 /// LLMサービスの設定
 enum LLMEnginePreference: String, CaseIterable {
     case auto = "auto"
+    case cloudAPI = "cloud"
     case appleIntelligence = "apple"
     case localModel = "local"
     case none = "none"
@@ -120,6 +120,7 @@ enum LLMEnginePreference: String, CaseIterable {
     var displayName: String {
         switch self {
         case .auto: return "自動（推奨）"
+        case .cloudAPI: return "クラウドAPI"
         case .appleIntelligence: return "Apple Intelligence"
         case .localModel: return "ローカルモデル"
         case .none: return "使用しない"
@@ -128,7 +129,8 @@ enum LLMEnginePreference: String, CaseIterable {
 
     var description: String {
         switch self {
-        case .auto: return "利用可能な最適なエンジンを自動選択"
+        case .auto: return "クラウドAPI → Apple Intelligence → ローカルの順で自動選択"
+        case .cloudAPI: return "Claude APIで高精度な抽出（要APIキー・通信）"
         case .appleIntelligence: return "iOS 26以降で利用可能"
         case .localModel: return "オフライン対応、約2GBのダウンロードが必要"
         case .none: return "LLMを使用せず、OCRテキストのみを使用"
@@ -138,27 +140,37 @@ enum LLMEnginePreference: String, CaseIterable {
 
 // MARK: - Prompt Templates
 
-/// 書籍情報抽出用のプロンプトを生成
-func makeBookExtractionPrompt(ocrText: String) -> String {
+/// スポット情報抽出用のプロンプトを生成
+func makePOIExtractionPrompt(ocrText: String) -> String {
     """
-    以下は本の表紙や奥付からOCRで読み取ったテキストです。
-    書籍情報を抽出してJSON形式で出力してください。
+    以下はレストランや店舗などの看板・メニュー・チラシ等の写真からOCRで読み取ったテキストです。
+    このテキストからスポット情報を推論・抽出してJSON形式で出力してください。
+
+    重要な注意点:
+    - OCRは看板のテキストを行ごとに分割します。複数行にわたる情報は結合してください
+    - 例: 「アパ社長カレー」「横浜ベイタワー店」→ 施設名は「アパ社長カレー 横浜ベイタワー店」
+    - 例: 「東京都港区」「六本木1-2-3」→ 住所は「東京都港区六本木1-2-3」
+    - 店名とブランド名・支店名が別の行にある場合は結合して1つの施設名にしてください
+    - 住所の都道府県・市区町村・番地が別の行にある場合も結合してください
 
     OCRテキスト:
     \(ocrText)
 
     出力形式（JSONのみ、説明不要）:
     {
-      "title": "書籍タイトル",
-      "author": "著者名",
-      "publisher": "出版社名",
-      "isbn": "ISBN-13（13桁の数字のみ）"
+      "name": "施設名（店名+支店名を結合）",
+      "address": "住所（複数行を結合）",
+      "phone": "電話番号",
+      "hours": "営業時間",
+      "category": "カテゴリ（例：レストラン、カフェ、居酒屋、カレー店など）",
+      "priceRange": "価格帯（例：¥1,000〜¥2,000）"
     }
 
-    注意:
-    - ISBNは数字のみ13桁（978または979で始まる）
+    その他の注意:
     - 見つからない項目はnull
-    - OCRの誤認識（0とO、1とIやl）を考慮して推測
-    - タイトルや著者名の明らかな誤字は修正
+    - OCRの誤認識（0とO、1とIやl）を考慮して推測・修正
+    - 施設名や住所の明らかな誤字は修正
+    - 電話番号はハイフン区切りで出力
+    - テキストの断片から施設の種類を推論してcategoryを設定
     """
 }

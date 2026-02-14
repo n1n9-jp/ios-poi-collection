@@ -1,95 +1,83 @@
 //
-//  BookInfo.swift
+//  POIInfo.swift
 //  iOSPhotoBrowser
 //
 
 import Foundation
 
-// MARK: - Reading Status
+// MARK: - Visit Status
 
-enum ReadingStatus: Int16, CaseIterable, Hashable {
-    case unread = 0      // 未読
-    case reading = 1     // 読書中
-    case finished = 2    // 読了
+enum VisitStatus: Int16, CaseIterable, Hashable {
+    case wantToVisit = 0   // 行きたい
+    case visited = 1       // 訪問済み
+    case favorite = 2      // お気に入り
 
     var displayName: String {
         switch self {
-        case .unread: return "未読"
-        case .reading: return "読書中"
-        case .finished: return "読了"
+        case .wantToVisit: return "行きたい"
+        case .visited: return "訪問済み"
+        case .favorite: return "お気に入り"
         }
     }
 
     var iconName: String {
         switch self {
-        case .unread: return "book.closed"
-        case .reading: return "book"
-        case .finished: return "checkmark.circle"
+        case .wantToVisit: return "mappin.circle"
+        case .visited: return "checkmark.circle"
+        case .favorite: return "star.fill"
         }
     }
 }
 
-// MARK: - Ownership Status
+// MARK: - POIInfo
 
-enum OwnershipStatus: Int16, CaseIterable, Hashable {
-    case notOwned = 0    // 持っていない
-    case owned = 1       // 持っている
-
-    var displayName: String {
-        switch self {
-        case .notOwned: return "持っていない"
-        case .owned: return "持っている"
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .notOwned: return "xmark.circle"
-        case .owned: return "checkmark.circle.fill"
-        }
-    }
-}
-
-// MARK: - BookInfo
-
-struct BookInfo: Identifiable, Hashable {
+struct POIInfo: Identifiable, Hashable {
     let id: UUID
-    let isbn: String
-    var title: String?
-    var author: String?
-    var publisher: String?
-    var publishedDate: String?
-    var coverUrl: String?
+    var name: String?
+    var address: String?
+    var phoneNumber: String?
+    var businessHours: String?
+    var websiteUrl: String?
     var category: String?
-    var readingStatus: ReadingStatus
-    var ownershipStatus: OwnershipStatus
+    var priceRange: String?
+    var notes: String?
+    var rating: Int16
+    var visitStatus: VisitStatus
+    var latitude: Double?
+    var longitude: Double?
     let createdAt: Date
     var updatedAt: Date
 
     init(
         id: UUID = UUID(),
-        isbn: String,
-        title: String? = nil,
-        author: String? = nil,
-        publisher: String? = nil,
-        publishedDate: String? = nil,
-        coverUrl: String? = nil,
+        name: String? = nil,
+        address: String? = nil,
+        phoneNumber: String? = nil,
+        businessHours: String? = nil,
+        websiteUrl: String? = nil,
         category: String? = nil,
-        readingStatus: ReadingStatus = .unread,
-        ownershipStatus: OwnershipStatus = .notOwned,
+        priceRange: String? = nil,
+        notes: String? = nil,
+        rating: Int16 = 0,
+        visitStatus: VisitStatus = .wantToVisit,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
         self.id = id
-        self.isbn = isbn
-        self.title = title
-        self.author = author
-        self.publisher = publisher
-        self.publishedDate = publishedDate
-        self.coverUrl = coverUrl
+        self.name = name
+        self.address = address
+        self.phoneNumber = phoneNumber
+        self.businessHours = businessHours
+        self.websiteUrl = websiteUrl
         self.category = category
-        self.readingStatus = readingStatus
-        self.ownershipStatus = ownershipStatus
+        self.priceRange = priceRange
+        self.notes = notes
+        self.rating = rating
+        self.visitStatus = visitStatus
+        self.latitude = latitude
+        self.longitude = longitude
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

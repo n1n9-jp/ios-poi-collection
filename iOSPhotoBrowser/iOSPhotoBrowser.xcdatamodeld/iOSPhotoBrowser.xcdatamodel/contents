@@ -18,7 +18,7 @@
         <attribute name="thumbnailPath" optional="YES" attributeType="String"/>
         <attribute name="width" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
         <relationship name="albums" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="AlbumEntity" inverseName="images" inverseEntity="AlbumEntity"/>
-        <relationship name="bookInfo" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="BookInfoEntity" inverseName="image" inverseEntity="BookInfoEntity"/>
+        <relationship name="poiInfo" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="POIInfoEntity" inverseName="image" inverseEntity="POIInfoEntity"/>
         <relationship name="tags" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="TagEntity" inverseName="images" inverseEntity="TagEntity"/>
     </entity>
     <entity name="TagEntity" representedClassName="TagEntity" syncable="YES" codeGenerationType="class">
@@ -36,19 +36,22 @@
         <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
         <relationship name="images" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="ImageEntity" inverseName="albums" inverseEntity="ImageEntity"/>
     </entity>
-    <entity name="BookInfoEntity" representedClassName="BookInfoEntity" syncable="YES" codeGenerationType="class">
-        <attribute name="author" optional="YES" attributeType="String"/>
+    <entity name="POIInfoEntity" representedClassName="POIInfoEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="address" optional="YES" attributeType="String"/>
+        <attribute name="businessHours" optional="YES" attributeType="String"/>
         <attribute name="category" optional="YES" attributeType="String"/>
-        <attribute name="coverUrl" optional="YES" attributeType="String"/>
         <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
-        <attribute name="isbn" attributeType="String" defaultValueString=""/>
-        <attribute name="ownershipStatus" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="publishedDate" optional="YES" attributeType="String"/>
-        <attribute name="publisher" optional="YES" attributeType="String"/>
-        <attribute name="readingStatus" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
-        <attribute name="title" optional="YES" attributeType="String"/>
+        <attribute name="latitude" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="longitude" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="notes" optional="YES" attributeType="String"/>
+        <attribute name="phoneNumber" optional="YES" attributeType="String"/>
+        <attribute name="priceRange" optional="YES" attributeType="String"/>
+        <attribute name="rating" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
-        <relationship name="image" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="ImageEntity" inverseName="bookInfo" inverseEntity="ImageEntity"/>
+        <attribute name="visitStatus" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="websiteUrl" optional="YES" attributeType="String"/>
+        <relationship name="image" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="ImageEntity" inverseName="poiInfo" inverseEntity="ImageEntity"/>
     </entity>
 </model>

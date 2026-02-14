@@ -2,7 +2,7 @@
 //  VLMService.swift
 //  iOSPhotoBrowser
 //
-//  Vision Language Model を使用した画像からの書籍情報抽出
+//  Vision Language Model を使用した画像からのスポット情報抽出
 //  MiniCPM-V 4.0 + llama.cpp による実装
 //
 
@@ -11,7 +11,7 @@ import Foundation
 import UIKit
 
 /// Vision Language Model サービス
-/// 画像から直接書籍情報を抽出（OCR不要）
+/// 画像から直接スポット情報を抽出（OCR不要）
 actor VLMService: VLMServiceProtocol {
     nonisolated let serviceName = "Vision LLM (MiniCPM-V)"
 
@@ -57,7 +57,7 @@ actor VLMService: VLMServiceProtocol {
         let params = MTMDParams(
             modelPath: modelPath,
             mmprojPath: mmprojPath,
-            nPredict: 512,  // 書籍情報抽出には十分
+            nPredict: 512,  // スポット情報抽出には十分
             nCtx: 4096,
             nThreads: 4,
             temperature: 0.3,  // 低めの温度で安定した出力
@@ -87,8 +87,8 @@ actor VLMService: VLMServiceProtocol {
         print("[VLMService] Model unloaded")
     }
 
-    /// 画像から書籍情報を抽出
-    func extractBookInfo(from image: UIImage) async throws -> ExtractedBookData {
+    /// 画像からスポット情報を抽出
+    func extractPOIInfo(from image: UIImage) async throws -> ExtractedPOIData {
         if !isModelLoaded {
             try await loadModel()
         }
@@ -123,7 +123,7 @@ actor VLMService: VLMServiceProtocol {
             try await wrapper.addImageInBackground(tempURL.path)
 
             // プロンプトを追加
-            let prompt = makeVLMBookExtractionPrompt()
+            let prompt = makeVLMPOIExtractionPrompt()
             try await wrapper.addTextInBackground(prompt, role: "user")
 
             // 生成を開始
@@ -172,7 +172,7 @@ actor VLMService: VLMServiceProtocol {
 
     // MARK: - Private Helpers
 
-    private func parseJSONResponse(_ response: String) -> ExtractedBookData {
+    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
         var jsonString = response
 
         // マークダウンコードブロックを除去
@@ -196,39 +196,37 @@ actor VLMService: VLMServiceProtocol {
         guard let data = jsonString.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             print("[VLMService] Failed to parse JSON: \(jsonString.prefix(100))")
-            return ExtractedBookData(confidence: 0.1)
+            return ExtractedPOIData(confidence: 0.1)
         }
 
-        let title = json["title"] as? String
-        let author = json["author"] as? String
-        let publisher = json["publisher"] as? String
-        var isbn = json["isbn"] as? String
-
-        // ISBNのクリーニング
-        if let rawISBN = isbn {
-            isbn = rawISBN.filter { $0.isNumber }
-            if isbn?.count != 13 {
-                isbn = nil
-            }
-        }
+        let name = json["name"] as? String
+        let address = json["address"] as? String
+        let phone = json["phone"] as? String
+        let hours = json["hours"] as? String
+        let category = json["category"] as? String
+        let priceRange = json["priceRange"] as? String
 
         // 信頼度スコアを計算
         var confidence = 0.0
         var fields = 0
-        if title != nil && !title!.isEmpty { fields += 1 }
-        if author != nil && !author!.isEmpty { fields += 1 }
-        if publisher != nil && !publisher!.isEmpty { fields += 1 }
-        if isbn != nil { fields += 2 }
-        confidence = Double(fields) / 5.0
+        if name != nil && !name!.isEmpty { fields += 1 }
+        if address != nil && !address!.isEmpty { fields += 1 }
+        if phone != nil && !phone!.isEmpty { fields += 1 }
+        if hours != nil && !hours!.isEmpty { fields += 1 }
+        if category != nil && !category!.isEmpty { fields += 1 }
+        if priceRange != nil && !priceRange!.isEmpty { fields += 1 }
+        confidence = Double(fields) / 6.0
 
         // VLMは画像から直接認識するため、信頼度にボーナス
         confidence = min(1.0, confidence + 0.2)
 
-        return ExtractedBookData(
-            title: title,
-            author: author,
-            publisher: publisher,
-            isbn: isbn,
+        return ExtractedPOIData(
+            name: name,
+            address: address,
+            phoneNumber: phone,
+            businessHours: hours,
+            category: category,
+            priceRange: priceRange,
             confidence: confidence
         )
     }
@@ -236,18 +234,20 @@ actor VLMService: VLMServiceProtocol {
 
 // MARK: - VLM Prompt
 
-/// VLM用の書籍情報抽出プロンプト
-private func makeVLMBookExtractionPrompt() -> String {
+/// VLM用のスポット情報抽出プロンプト
+private func makeVLMPOIExtractionPrompt() -> String {
     """
-    この画像は本の表紙です。書籍情報を抽出してJSON形式で出力してください。
+    この画像はレストランや店舗などの看板・メニュー・チラシ等の写真です。スポット情報を抽出してJSON形式で出力してください。
 
     出力形式（JSONのみ、説明不要）:
-    {"title": "書籍タイトル", "author": "著者名", "publisher": "出版社名", "isbn": "ISBN13桁"}
+    {"name": "施設名", "address": "住所", "phone": "電話番号", "hours": "営業時間", "category": "カテゴリ", "priceRange": "価格帯"}
 
     注意:
     - 見つからない項目はnull
-    - タイトルと著者名を正確に読み取ってください
+    - 施設名は店名とブランド名・支店名を結合して完全な名前にしてください
+    - 住所は都道府県から番地まで結合してください
     - 日本語の場合は日本語で出力
+    - テキストの断片から施設の種類を推論してcategoryを設定
     """
 }
 

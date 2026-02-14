@@ -14,6 +14,7 @@ actor LLMService {
     private var appleService: (any LLMServiceProtocol)?
     private var llamaService: LlamaService?
     private var vlmService: VLMService?
+    private var cloudService: CloudLLMService?
 
     private init() {
         // Apple Foundation Models サービスの初期化（iOS 26以降）
@@ -26,18 +27,25 @@ actor LLMService {
 
         // VLM サービスの初期化
         vlmService = VLMService()
+
+        // クラウドAPIサービスの初期化
+        cloudService = CloudLLMService()
     }
 
     // MARK: - Public Interface
 
-    /// 利用可能なLLMを使用して書籍情報を抽出
-    func extractBookInfo(from ocrText: String) async throws -> ExtractedBookData {
+    /// 利用可能なLLMを使用してスポット情報を抽出
+    func extractPOIInfo(from ocrText: String) async throws -> ExtractedPOIData {
         let preference = await MainActor.run { LLMModelManager.shared.enginePreference }
 
         switch preference {
         case .none:
             // LLMを使用しない
             throw LLMError.notAvailable
+
+        case .cloudAPI:
+            // クラウドAPIのみを試行
+            return try await extractWithCloud(from: ocrText)
 
         case .appleIntelligence:
             // Apple Intelligence のみを試行
@@ -48,7 +56,7 @@ actor LLMService {
             return try await extractWithLlama(from: ocrText)
 
         case .auto:
-            // 自動選択：Apple Intelligence → ローカルモデルの順で試行
+            // 自動選択：クラウドAPI → Apple Intelligence → ローカルモデルの順で試行
             return try await extractWithAuto(from: ocrText)
         }
     }
@@ -59,6 +67,11 @@ actor LLMService {
 
         switch preference {
         case .none:
+            return nil
+        case .cloudAPI:
+            if let service = cloudService, await service.isAvailable {
+                return service.serviceName
+            }
             return nil
         case .appleIntelligence:
             if #available(iOS 26.0, *), let service = appleService, await service.isAvailable {
@@ -71,6 +84,9 @@ actor LLMService {
             }
             return nil
         case .auto:
+            if let service = cloudService, await service.isAvailable {
+                return service.serviceName
+            }
             if #available(iOS 26.0, *), let service = appleService, await service.isAvailable {
                 return service.serviceName
             }
@@ -90,6 +106,13 @@ actor LLMService {
         case .none:
             print("[LLMService] LLM disabled by user")
             return false
+        case .cloudAPI:
+            if let service = cloudService {
+                let available = await service.isAvailable
+                print("[LLMService] Cloud API available: \(available)")
+                return available
+            }
+            return false
         case .appleIntelligence:
             if #available(iOS 26.0, *), let service = appleService {
                 let available = await service.isAvailable
@@ -107,6 +130,11 @@ actor LLMService {
             print("[LLMService] Local model service not initialized")
             return false
         case .auto:
+            if let service = cloudService {
+                let cloudAvailable = await service.isAvailable
+                print("[LLMService] Auto mode - Cloud API available: \(cloudAvailable)")
+                if cloudAvailable { return true }
+            }
             if #available(iOS 26.0, *), let service = appleService {
                 let appleAvailable = await service.isAvailable
                 print("[LLMService] Auto mode - Apple Intelligence available: \(appleAvailable)")
@@ -124,43 +152,63 @@ actor LLMService {
 
     // MARK: - Private Methods
 
-    private func extractWithApple(from ocrText: String) async throws -> ExtractedBookData {
+    private func extractWithCloud(from ocrText: String) async throws -> ExtractedPOIData {
+        guard let service = cloudService else {
+            throw LLMError.notAvailable
+        }
+        guard await service.isAvailable else {
+            throw LLMError.extractionFailed("APIキーが設定されていません")
+        }
+        return try await service.extractPOIInfo(from: ocrText)
+    }
+
+    private func extractWithApple(from ocrText: String) async throws -> ExtractedPOIData {
         guard #available(iOS 26.0, *), let service = appleService else {
             throw LLMError.notAvailable
         }
         guard await service.isAvailable else {
             throw LLMError.notAvailable
         }
-        return try await service.extractBookInfo(from: ocrText)
+        return try await service.extractPOIInfo(from: ocrText)
     }
 
-    private func extractWithLlama(from ocrText: String) async throws -> ExtractedBookData {
+    private func extractWithLlama(from ocrText: String) async throws -> ExtractedPOIData {
         guard let service = llamaService else {
             throw LLMError.notAvailable
         }
         guard await service.isAvailable else {
             throw LLMError.modelNotLoaded
         }
-        return try await service.extractBookInfo(from: ocrText)
+        return try await service.extractPOIInfo(from: ocrText)
     }
 
-    private func extractWithAuto(from ocrText: String) async throws -> ExtractedBookData {
-        // 1. Apple Intelligence を試行
+    private func extractWithAuto(from ocrText: String) async throws -> ExtractedPOIData {
+        // 1. クラウドAPI を試行（最高精度）
+        if let service = cloudService, await service.isAvailable {
+            do {
+                let result = try await service.extractPOIInfo(from: ocrText)
+                print("[LLMService] Extracted using \(service.serviceName)")
+                return result
+            } catch {
+                print("[LLMService] Cloud API failed: \(error.localizedDescription)")
+            }
+        }
+
+        // 2. Apple Intelligence を試行
         if #available(iOS 26.0, *), let service = appleService, await service.isAvailable {
             do {
-                let result = try await service.extractBookInfo(from: ocrText)
+                let result = try await service.extractPOIInfo(from: ocrText)
                 print("[LLMService] Extracted using \(service.serviceName)")
                 return result
             } catch {
                 print("[LLMService] Apple Intelligence failed: \(error.localizedDescription)")
-                // フォールスルーしてローカルモデルを試行
             }
         }
 
-        // 2. ローカルモデル（llama.cpp）を試行
+        // 3. ローカルモデル（llama.cpp）を試行
         if let service = llamaService, await service.isAvailable {
             do {
-                let result = try await service.extractBookInfo(from: ocrText)
+                let result = try await service.extractPOIInfo(from: ocrText)
                 print("[LLMService] Extracted using \(service.serviceName)")
                 return result
             } catch {
@@ -168,7 +216,7 @@ actor LLMService {
             }
         }
 
-        // 3. どちらも利用不可
+        // 4. すべて利用不可
         throw LLMError.notAvailable
     }
 
@@ -189,15 +237,15 @@ actor LLMService {
 
     // MARK: - VLM (Vision Language Model) Methods
 
-    /// 画像から直接書籍情報を抽出（VLM使用、OCR不要）
-    func extractBookInfoFromImage(_ image: UIImage) async throws -> ExtractedBookData {
+    /// 画像から直接スポット情報を抽出（VLM使用、OCR不要）
+    func extractPOIInfoFromImage(_ image: UIImage) async throws -> ExtractedPOIData {
         guard let service = vlmService else {
             throw LLMError.notAvailable
         }
         guard await service.isAvailable else {
             throw LLMError.modelNotLoaded
         }
-        return try await service.extractBookInfo(from: image)
+        return try await service.extractPOIInfo(from: image)
     }
 
     /// VLMが利用可能かどうか
@@ -223,48 +271,78 @@ actor LLMService {
 // MARK: - Convenience Extension for OCRService
 
 extension LLMService {
-    /// OCRテキストから書籍情報を抽出（失敗時は空のデータを返す）
-    func extractBookInfoOrEmpty(from ocrText: String) async -> ExtractedBookData {
+    /// OCRテキストからスポット情報を抽出（失敗時は空のデータを返す）
+    func extractPOIInfoOrEmpty(from ocrText: String) async -> ExtractedPOIData {
         do {
-            return try await extractBookInfo(from: ocrText)
+            return try await extractPOIInfo(from: ocrText)
         } catch {
             print("[LLMService] Extraction failed: \(error.localizedDescription)")
-            return ExtractedBookData()
+            return ExtractedPOIData()
         }
     }
 
-    /// 画像から書籍情報を抽出（失敗時は空のデータを返す）
-    func extractBookInfoFromImageOrEmpty(_ image: UIImage) async -> ExtractedBookData {
+    /// 画像からスポット情報を抽出（失敗時は空のデータを返す）
+    func extractPOIInfoFromImageOrEmpty(_ image: UIImage) async -> ExtractedPOIData {
         do {
-            return try await extractBookInfoFromImage(image)
+            return try await extractPOIInfoFromImage(image)
         } catch {
             print("[LLMService] VLM extraction failed: \(error.localizedDescription)")
-            return ExtractedBookData()
+            return ExtractedPOIData()
         }
     }
 
-    /// 最適な方法で書籍情報を抽出（VLM優先、フォールバックとしてOCR+LLM）
-    func extractBookInfoBestMethod(image: UIImage, ocrText: String?) async -> ExtractedBookData {
-        // 1. VLMが利用可能なら画像から直接抽出
+    /// クラウドAPIで画像から直接スポット情報を抽出
+    func extractPOIInfoFromImageWithCloud(_ image: UIImage) async throws -> ExtractedPOIData {
+        guard let service = cloudService else {
+            throw LLMError.notAvailable
+        }
+        guard await service.isAvailable else {
+            throw LLMError.extractionFailed("APIキーが設定されていません")
+        }
+        return try await service.extractPOIInfoFromImage(image)
+    }
+
+    /// クラウドAPIが利用可能かどうか
+    func isCloudAPIAvailable() async -> Bool {
+        guard let service = cloudService else { return false }
+        return await service.isAvailable
+    }
+
+    /// 最適な方法でスポット情報を抽出（クラウドAPI → VLM → OCR+LLM）
+    func extractPOIInfoBestMethod(image: UIImage, ocrText: String?) async -> ExtractedPOIData {
+        // 1. クラウドAPIが利用可能なら画像から直接抽出（最高精度）
+        if await isCloudAPIAvailable() {
+            do {
+                let result = try await extractPOIInfoFromImageWithCloud(image)
+                if result.hasValidData {
+                    print("[LLMService] Extracted using Cloud API (image)")
+                    return result
+                }
+            } catch {
+                print("[LLMService] Cloud API image extraction failed: \(error.localizedDescription)")
+            }
+        }
+
+        // 2. VLMが利用可能なら画像から直接抽出
         if await isVLMAvailable() {
-            let result = await extractBookInfoFromImageOrEmpty(image)
+            let result = await extractPOIInfoFromImageOrEmpty(image)
             if result.hasValidData {
                 print("[LLMService] Extracted using VLM")
                 return result
             }
         }
 
-        // 2. OCRテキストがあればLLMで処理
+        // 3. OCRテキストがあればLLMで処理
         if let ocrText = ocrText, !ocrText.isEmpty {
-            let result = await extractBookInfoOrEmpty(from: ocrText)
+            let result = await extractPOIInfoOrEmpty(from: ocrText)
             if result.hasValidData {
                 print("[LLMService] Extracted using OCR+LLM")
                 return result
             }
         }
 
-        // 3. 抽出失敗
+        // 4. 抽出失敗
         print("[LLMService] No valid extraction result")
-        return ExtractedBookData()
+        return ExtractedPOIData()
     }
 }

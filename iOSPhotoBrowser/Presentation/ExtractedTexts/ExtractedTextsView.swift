@@ -1,12 +1,12 @@
 //
-//  ExtractedTextsView.swift
+//  POIListView.swift
 //  iOSPhotoBrowser
 //
 
 import SwiftUI
 
-struct ExtractedTextsView: View {
-    @StateObject private var viewModel = DependencyContainer.shared.makeExtractedTextsViewModel()
+struct POIListView: View {
+    @StateObject private var viewModel = DependencyContainer.shared.makePOIListViewModel()
     @State private var selectedItem: ExtractedTextItem?
     @State private var showingFilterSheet = false
 
@@ -21,8 +21,28 @@ struct ExtractedTextsView: View {
                     tableListView
                 }
             }
-            .navigationTitle("書誌情報")
+            .navigationTitle("スポット一覧")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if viewModel.isGeneratingBatch {
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("\(viewModel.batchProgress.current)/\(viewModel.batchProgress.total)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else if viewModel.unlinkedItemCount > 0 {
+                        Button {
+                            Task {
+                                await viewModel.generatePOIInfoForUnlinkedItems()
+                            }
+                        } label: {
+                            Label("一括生成(\(viewModel.unlinkedItemCount))", systemImage: "sparkles")
+                                .font(.caption)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingFilterSheet = true
@@ -42,16 +62,29 @@ struct ExtractedTextsView: View {
             } message: {
                 Text(viewModel.error?.localizedDescription ?? "不明なエラー")
             }
+            .alert("一括生成結果", isPresented: .init(
+                get: { viewModel.batchResultMessage != nil },
+                set: { if !$0 { viewModel.batchResultMessage = nil } }
+            )) {
+                Button("OK") { viewModel.batchResultMessage = nil }
+            } message: {
+                Text(viewModel.batchResultMessage ?? "")
+            }
             .sheet(item: $selectedItem) { item in
-                BookDetailSheetView(
+                POIDetailSheetView(
                     item: item,
-                    onStatusUpdate: { readingStatus, ownershipStatus in
+                    onStatusUpdate: { visitStatus in
                         Task {
                             await viewModel.updateStatus(
                                 for: item.id,
-                                readingStatus: readingStatus,
-                                ownershipStatus: ownershipStatus
+                                visitStatus: visitStatus
                             )
+                        }
+                    },
+                    onGenerate: {
+                        Task {
+                            await viewModel.generatePOIInfo(for: item.id)
+                            selectedItem = nil
                         }
                     },
                     onDismiss: {
@@ -70,18 +103,9 @@ struct ExtractedTextsView: View {
     private var filterSheet: some View {
         NavigationStack {
             Form {
-                Section("読書状況") {
-                    Picker("読書状況", selection: $viewModel.readingStatusFilter) {
-                        ForEach(ReadingStatusFilter.allCases, id: \.self) { filter in
-                            Text(filter.displayName).tag(filter)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section("所有状況") {
-                    Picker("所有状況", selection: $viewModel.ownershipStatusFilter) {
-                        ForEach(OwnershipStatusFilter.allCases, id: \.self) { filter in
+                Section("訪問ステータス") {
+                    Picker("訪問ステータス", selection: $viewModel.visitStatusFilter) {
+                        ForEach(VisitStatusFilter.allCases, id: \.self) { filter in
                             Text(filter.displayName).tag(filter)
                         }
                     }
@@ -111,11 +135,11 @@ struct ExtractedTextsView: View {
 
     private var emptyStateView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "book.closed")
+            Image(systemName: "mappin.slash")
                 .font(.system(size: 60))
                 .foregroundColor(.secondary)
             if viewModel.hasActiveFilters {
-                Text("該当する書誌情報がありません")
+                Text("該当するスポット情報がありません")
                     .font(.headline)
                 Text("フィルター条件を変更してみてください")
                     .font(.subheadline)
@@ -125,9 +149,9 @@ struct ExtractedTextsView: View {
                 }
                 .buttonStyle(.bordered)
             } else {
-                Text("書誌情報がありません")
+                Text("スポット情報がありません")
                     .font(.headline)
-                Text("詳細画面で「抽出」ボタンを押すと\nOCRでテキストを抽出し、\n書誌情報を取得できます")
+                Text("詳細画面で「抽出」ボタンを押すと\nOCRでテキストを抽出し、\nスポット情報を取得できます")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -146,31 +170,31 @@ struct ExtractedTextsView: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    // Book title
-                                    Text(item.bookTitle ?? item.displayTitle)
+                                    // POI name
+                                    Text(item.poiName ?? item.displayTitle)
                                         .font(.body)
                                         .foregroundColor(.primary)
                                         .lineLimit(2)
 
-                                    // Author
-                                    if let author = item.bookAuthor {
-                                        Text(author)
+                                    // Address
+                                    if let address = item.poiAddress {
+                                        Text(address)
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                             .lineLimit(1)
                                     }
 
-                                    // Status badges
+                                    // Category and visit status badge
                                     HStack(spacing: 8) {
+                                        if let category = item.poiCategory {
+                                            Text(category)
+                                                .font(.system(size: 10))
+                                                .foregroundColor(.secondary)
+                                        }
                                         statusBadge(
-                                            icon: item.readingStatus.iconName,
-                                            text: item.readingStatus.displayName,
-                                            color: readingStatusColor(item.readingStatus)
-                                        )
-                                        statusBadge(
-                                            icon: item.ownershipStatus.iconName,
-                                            text: item.ownershipStatus.displayName,
-                                            color: item.ownershipStatus == .owned ? .green : .gray
+                                            icon: item.visitStatus.iconName,
+                                            text: item.visitStatus.displayName,
+                                            color: visitStatusColor(item.visitStatus)
                                         )
                                     }
                                 }
@@ -214,36 +238,37 @@ struct ExtractedTextsView: View {
         .cornerRadius(4)
     }
 
-    private func readingStatusColor(_ status: ReadingStatus) -> Color {
+    private func visitStatusColor(_ status: VisitStatus) -> Color {
         switch status {
-        case .unread: return .gray
-        case .reading: return .blue
-        case .finished: return .green
+        case .wantToVisit: return .orange
+        case .visited: return .blue
+        case .favorite: return .yellow
         }
     }
 }
 
-// MARK: - Book Detail Sheet View
+// MARK: - POI Detail Sheet View
 
-struct BookDetailSheetView: View {
+struct POIDetailSheetView: View {
     let item: ExtractedTextItem
-    let onStatusUpdate: (ReadingStatus, OwnershipStatus) -> Void
+    let onStatusUpdate: (VisitStatus) -> Void
+    let onGenerate: (() -> Void)?
     let onDismiss: () -> Void
 
-    @State private var readingStatus: ReadingStatus
-    @State private var ownershipStatus: OwnershipStatus
+    @State private var visitStatus: VisitStatus
     @State private var hasChanges = false
 
     init(
         item: ExtractedTextItem,
-        onStatusUpdate: @escaping (ReadingStatus, OwnershipStatus) -> Void,
+        onStatusUpdate: @escaping (VisitStatus) -> Void,
+        onGenerate: (() -> Void)? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.item = item
         self.onStatusUpdate = onStatusUpdate
+        self.onGenerate = onGenerate
         self.onDismiss = onDismiss
-        _readingStatus = State(initialValue: item.readingStatus)
-        _ownershipStatus = State(initialValue: item.ownershipStatus)
+        _visitStatus = State(initialValue: item.visitStatus)
     }
 
     var body: some View {
@@ -266,48 +291,52 @@ struct BookDetailSheetView: View {
                     .listRowBackground(Color.clear)
                 }
 
-                // User status section (editable)
-                Section("ユーザー情報") {
-                    Picker("読書状況", selection: $readingStatus) {
-                        ForEach(ReadingStatus.allCases, id: \.self) { status in
+                // Visit status section (editable)
+                Section("訪問ステータス") {
+                    Picker("訪問状況", selection: $visitStatus) {
+                        ForEach(VisitStatus.allCases, id: \.self) { status in
                             Label(status.displayName, systemImage: status.iconName)
                                 .tag(status)
                         }
                     }
-                    .onChange(of: readingStatus) { _, _ in
-                        hasChanges = true
-                    }
-
-                    Picker("所有状況", selection: $ownershipStatus) {
-                        ForEach(OwnershipStatus.allCases, id: \.self) { status in
-                            Label(status.displayName, systemImage: status.iconName)
-                                .tag(status)
-                        }
-                    }
-                    .onChange(of: ownershipStatus) { _, _ in
+                    .onChange(of: visitStatus) { _, _ in
                         hasChanges = true
                     }
                 }
 
-                // Book info section
-                Section("書誌情報") {
-                    if let title = item.bookTitle {
-                        infoRow("タイトル", value: title)
+                // POI info section
+                Section("スポット情報") {
+                    if let name = item.poiName {
+                        infoRow("施設名", value: name)
                     }
-                    if let author = item.bookAuthor {
-                        infoRow("著者", value: author)
+                    if let address = item.poiAddress {
+                        infoRow("住所", value: address)
                     }
-                    if let publisher = item.bookPublisher {
-                        infoRow("出版社", value: publisher)
+                    if let phone = item.poiPhone {
+                        infoRow("電話", value: phone)
                     }
-                    if let isbn = item.bookISBN, !isbn.isEmpty {
-                        infoRow("ISBN", value: isbn)
+                    if let hours = item.poiHours {
+                        infoRow("営業時間", value: hours)
                     }
-                    if let category = item.bookCategory {
+                    if let category = item.poiCategory {
                         infoRow("カテゴリ", value: category)
+                    }
+                    if let priceRange = item.poiPriceRange {
+                        infoRow("価格帯", value: priceRange)
                     }
                     if let processedAt = item.ocrProcessedAt {
                         infoRow("取得日時", value: formatDate(processedAt))
+                    }
+                }
+
+                // Generate POI button (when no POI info exists but text is available)
+                if !item.hasPOIInfo, let text = item.extractedText, !text.isEmpty, let onGenerate {
+                    Section {
+                        Button {
+                            onGenerate()
+                        } label: {
+                            Label("テキストからスポット情報を生成", systemImage: "sparkles")
+                        }
                     }
                 }
 
@@ -329,7 +358,7 @@ struct BookDetailSheetView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(hasChanges ? "保存" : "閉じる") {
                         if hasChanges {
-                            onStatusUpdate(readingStatus, ownershipStatus)
+                            onStatusUpdate(visitStatus)
                         }
                         onDismiss()
                     }
