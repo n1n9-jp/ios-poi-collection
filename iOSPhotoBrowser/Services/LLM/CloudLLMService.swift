@@ -21,62 +21,22 @@ actor CloudLLMService: LLMServiceProtocol {
         }
     }
 
-    // MARK: - System Prompt
-
-    private let systemPrompt = """
-    あなたは日本のレストラン・店舗・施設の情報を正確に抽出するスペシャリストです。
-
-    ユーザーから画像またはOCRテキストが提供されます。そこから以下のスポット情報を抽出してJSONで返してください。
-
-    ## 抽出ルール
-
-    **name（施設名）**: 最も重要なフィールドです。
-    - 看板やロゴに書かれている正式な店名を抽出
-    - ブランド名＋支店名がある場合は必ず結合（例:「アパ社長カレー」+「横浜ベイタワー店」→「アパ社長カレー 横浜ベイタワー店」）
-    - チェーン店の場合は「ブランド名 支店名」の形式
-    - 装飾的な文字（★、♪等）は除去
-
-    **address（住所）**: 都道府県から番地・建物名まで結合してフルの住所にする。断片が散らばっている場合も1つにまとめる。
-
-    **phone（電話番号）**: ハイフン区切り（例: 045-123-4567）
-
-    **hours（営業時間）**: 開店〜閉店時間。曜日による違いがあれば含める。
-
-    **category（カテゴリ）**: 施設の種類を日本語で（例: カレー店、ラーメン店、カフェ、居酒屋、イタリアン、中華料理、焼肉店、寿司店、パン屋、バー、定食屋、レストラン、美容院、ホテル等）
-
-    **priceRange（価格帯）**: 例: ¥800〜¥1,500
-
-    ## 出力形式
-    必ず以下のJSON形式のみを出力してください。説明文は不要です。
-    ```json
-    {"name": "...", "address": "...", "phone": "...", "hours": "...", "category": "...", "priceRange": "..."}
-    ```
-    情報が読み取れないフィールドはnullにしてください。ただし、nameは画像/テキストに何らかの店舗・施設名が含まれている限り必ず抽出してください。
-    """
-
     // MARK: - Text-based POI Extraction (LLMServiceProtocol)
 
     func extractPOIInfo(from ocrText: String) async throws -> ExtractedPOIData {
         let apiKey = try await getAPIKey()
 
-        let prompt = """
-        以下はOCRで読み取ったテキストです。スポット情報を抽出してJSONで出力してください。
-
-        OCRテキスト:
-        \(ocrText)
-        """
-
         let response = try await callClaudeAPI(
             apiKey: apiKey,
-            system: systemPrompt,
+            system: POIPrompts.system,
             messages: [
                 ClaudeMessage(role: "user", content: [
-                    .text(prompt)
+                    .text(POIPrompts.userPromptForOCR(ocrText))
                 ])
             ]
         )
 
-        return parseJSONResponse(response)
+        return POIPrompts.parseJSONResponse(response)
     }
 
     // MARK: - Image-based POI Extraction
@@ -91,11 +51,9 @@ actor CloudLLMService: LLMServiceProtocol {
         }
         let base64String = imageData.base64EncodedString()
 
-        let prompt = "この画像に写っている店舗・施設のスポット情報をJSONで抽出してください。"
-
         let response = try await callClaudeAPI(
             apiKey: apiKey,
-            system: systemPrompt,
+            system: POIPrompts.system,
             messages: [
                 ClaudeMessage(role: "user", content: [
                     .image(ClaudeImageSource(
@@ -103,12 +61,12 @@ actor CloudLLMService: LLMServiceProtocol {
                         mediaType: "image/jpeg",
                         data: base64String
                     )),
-                    .text(prompt)
+                    .text(POIPrompts.userPromptForImage)
                 ])
             ]
         )
 
-        return parseJSONResponse(response)
+        return POIPrompts.parseJSONResponse(response)
     }
 
     // MARK: - Claude API Call
@@ -189,58 +147,6 @@ actor CloudLLMService: LLMServiceProtocol {
         return resized
     }
 
-    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
-        var jsonString = response
-
-        // マークダウンコードブロックを除去
-        if let startRange = response.range(of: "```json"),
-           let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        } else if let startRange = response.range(of: "```"),
-                  let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        }
-
-        // 最初の { から最後の } までを抽出
-        if let startIndex = jsonString.firstIndex(of: "{"),
-           let endIndex = jsonString.lastIndex(of: "}") {
-            jsonString = String(jsonString[startIndex...endIndex])
-        }
-
-        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard let data = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("[CloudLLM] Failed to parse JSON: \(jsonString.prefix(200))")
-            return ExtractedPOIData()
-        }
-
-        let name = json["name"] as? String
-        let address = json["address"] as? String
-        let phone = json["phone"] as? String
-        let hours = json["hours"] as? String
-        let category = json["category"] as? String
-        let priceRange = json["priceRange"] as? String
-
-        var fields = 0
-        if name != nil && !name!.isEmpty { fields += 1 }
-        if address != nil && !address!.isEmpty { fields += 1 }
-        if phone != nil && !phone!.isEmpty { fields += 1 }
-        if hours != nil && !hours!.isEmpty { fields += 1 }
-        if category != nil && !category!.isEmpty { fields += 1 }
-        if priceRange != nil && !priceRange!.isEmpty { fields += 1 }
-        let confidence = Double(fields) / 6.0
-
-        return ExtractedPOIData(
-            name: name,
-            address: address,
-            phoneNumber: phone,
-            businessHours: hours,
-            category: category,
-            priceRange: priceRange,
-            confidence: confidence
-        )
-    }
 }
 
 // MARK: - Claude API Models

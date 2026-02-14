@@ -126,21 +126,8 @@ actor LlamaService: LLMServiceProtocol {
             throw LLMError.modelNotLoaded
         }
 
-        // Gemma 2B Instruct用のプロンプト形式
-        let userPrompt = """
-        以下はOCRで読み取ったレストランや店舗の看板テキストです。スポット情報を推論してJSON形式で出力してください。
-        重要: OCRは行ごとにテキストを分割します。店名+支店名、住所の断片など、複数行にわたる情報は結合してください。
-        例: 「アパ社長カレー」「横浜ベイタワー店」→ name: "アパ社長カレー 横浜ベイタワー店"
-
-        OCRテキスト:
-        \(ocrText)
-
-        以下のJSON形式のみを出力してください（他の説明は不要）:
-        {"name": "施設名（店名+支店名を結合）", "address": "住所", "phone": "電話番号", "hours": "営業時間", "category": "カテゴリ", "priceRange": "価格帯"}
-        見つからない項目はnullにしてください。
-        """
-
-        // Gemma Instruct形式でラップ
+        // 共通プロンプトを使用し、Gemma Instruct形式でラップ
+        let userPrompt = POIPrompts.userPromptForOCR(ocrText)
         let prompt = "<start_of_turn>user\n\(userPrompt)<end_of_turn>\n<start_of_turn>model\n"
 
         print("[\(serviceName)] Prompt: \(prompt.prefix(200))...")
@@ -148,7 +135,13 @@ actor LlamaService: LLMServiceProtocol {
         // 推論を実行
         let response = try await generateText(prompt: prompt, ctx: ctx, model: model)
         print("[\(serviceName)] Generated response: \(response.prefix(300))...")
-        return parseJSONResponse(response)
+
+        // 共通パースを試行、失敗時は小型モデル向けフォールバック
+        let result = POIPrompts.parseJSONResponse(response)
+        if result.hasValidData {
+            return result
+        }
+        return extractFromPlainText(response)
         #else
         print("[\(serviceName)] llama package not enabled")
         throw LLMError.notAvailable
@@ -250,63 +243,7 @@ actor LlamaService: LLMServiceProtocol {
 
     // MARK: - Private Helpers
 
-    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
-        var jsonString = response
-
-        // マークダウンコードブロックを除去
-        if let startRange = response.range(of: "```json"),
-           let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        } else if let startRange = response.range(of: "```"),
-                  let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        }
-
-        // 最初の { から最後の } までを抽出
-        if let startIndex = jsonString.firstIndex(of: "{"),
-           let endIndex = jsonString.lastIndex(of: "}") {
-            jsonString = String(jsonString[startIndex...endIndex])
-        }
-
-        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // JSONをパース
-        guard let data = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("[\(serviceName)] Failed to parse JSON: \(jsonString.prefix(100))")
-            return extractFromPlainText(response)
-        }
-
-        let name = json["name"] as? String
-        let address = json["address"] as? String
-        let phone = json["phone"] as? String
-        let hours = json["hours"] as? String
-        let category = json["category"] as? String
-        let priceRange = json["priceRange"] as? String
-
-        // 信頼度スコアを計算
-        var confidence = 0.0
-        var fields = 0
-        if name != nil && !name!.isEmpty { fields += 1 }
-        if address != nil && !address!.isEmpty { fields += 1 }
-        if phone != nil && !phone!.isEmpty { fields += 1 }
-        if hours != nil && !hours!.isEmpty { fields += 1 }
-        if category != nil && !category!.isEmpty { fields += 1 }
-        if priceRange != nil && !priceRange!.isEmpty { fields += 1 }
-        confidence = Double(fields) / 6.0
-
-        return ExtractedPOIData(
-            name: name,
-            address: address,
-            phoneNumber: phone,
-            businessHours: hours,
-            category: category,
-            priceRange: priceRange,
-            confidence: confidence
-        )
-    }
-
-    /// JSONパース失敗時のフォールバック
+    /// JSONパース失敗時のフォールバック（小型モデル向け）
     private func extractFromPlainText(_ text: String) -> ExtractedPOIData {
         var name: String?
         var address: String?

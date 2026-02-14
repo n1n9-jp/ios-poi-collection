@@ -123,8 +123,7 @@ actor VLMService: VLMServiceProtocol {
             try await wrapper.addImageInBackground(tempURL.path)
 
             // プロンプトを追加
-            let prompt = makeVLMPOIExtractionPrompt()
-            try await wrapper.addTextInBackground(prompt, role: "user")
+            try await wrapper.addTextInBackground(POIPrompts.userPromptForImage, role: "user")
 
             // 生成を開始
             try await wrapper.startGeneration()
@@ -157,7 +156,10 @@ actor VLMService: VLMServiceProtocol {
             // コンテキストをリセット
             await wrapper.reset()
 
-            return parseJSONResponse(response)
+            // 共通パースを使用し、VLMは画像直接認識のため信頼度にボーナス
+            var result = POIPrompts.parseJSONResponse(response)
+            result.confidence = min(1.0, result.confidence + 0.2)
+            return result
         } catch let error as MTMDError {
             await wrapper.reset()
             throw LLMError.extractionFailed(error.localizedDescription)
@@ -170,85 +172,6 @@ actor VLMService: VLMServiceProtocol {
         }
     }
 
-    // MARK: - Private Helpers
-
-    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
-        var jsonString = response
-
-        // マークダウンコードブロックを除去
-        if let startRange = response.range(of: "```json"),
-           let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        } else if let startRange = response.range(of: "```"),
-                  let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        }
-
-        // 最初の { から最後の } までを抽出
-        if let startIndex = jsonString.firstIndex(of: "{"),
-           let endIndex = jsonString.lastIndex(of: "}") {
-            jsonString = String(jsonString[startIndex...endIndex])
-        }
-
-        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // JSONをパース
-        guard let data = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            print("[VLMService] Failed to parse JSON: \(jsonString.prefix(100))")
-            return ExtractedPOIData(confidence: 0.1)
-        }
-
-        let name = json["name"] as? String
-        let address = json["address"] as? String
-        let phone = json["phone"] as? String
-        let hours = json["hours"] as? String
-        let category = json["category"] as? String
-        let priceRange = json["priceRange"] as? String
-
-        // 信頼度スコアを計算
-        var confidence = 0.0
-        var fields = 0
-        if name != nil && !name!.isEmpty { fields += 1 }
-        if address != nil && !address!.isEmpty { fields += 1 }
-        if phone != nil && !phone!.isEmpty { fields += 1 }
-        if hours != nil && !hours!.isEmpty { fields += 1 }
-        if category != nil && !category!.isEmpty { fields += 1 }
-        if priceRange != nil && !priceRange!.isEmpty { fields += 1 }
-        confidence = Double(fields) / 6.0
-
-        // VLMは画像から直接認識するため、信頼度にボーナス
-        confidence = min(1.0, confidence + 0.2)
-
-        return ExtractedPOIData(
-            name: name,
-            address: address,
-            phoneNumber: phone,
-            businessHours: hours,
-            category: category,
-            priceRange: priceRange,
-            confidence: confidence
-        )
-    }
-}
-
-// MARK: - VLM Prompt
-
-/// VLM用のスポット情報抽出プロンプト
-private func makeVLMPOIExtractionPrompt() -> String {
-    """
-    この画像はレストランや店舗などの看板・メニュー・チラシ等の写真です。スポット情報を抽出してJSON形式で出力してください。
-
-    出力形式（JSONのみ、説明不要）:
-    {"name": "施設名", "address": "住所", "phone": "電話番号", "hours": "営業時間", "category": "カテゴリ", "priceRange": "価格帯"}
-
-    注意:
-    - 見つからない項目はnull
-    - 施設名は店名とブランド名・支店名を結合して完全な名前にしてください
-    - 住所は都道府県から番地まで結合してください
-    - 日本語の場合は日本語で出力
-    - テキストの断片から施設の種類を推論してcategoryを設定
-    """
 }
 
 // MARK: - VLM Model Manager

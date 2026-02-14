@@ -38,7 +38,7 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
         print("[AppleIntelligence] Starting extraction...")
         print("[AppleIntelligence] OCR Text length: \(ocrText.count) characters")
 
-        let prompt = makePOIExtractionPrompt(ocrText: ocrText)
+        let prompt = POIPrompts.userPromptForOCR(ocrText)
 
         do {
             // セッションを作成または再利用
@@ -59,9 +59,15 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
             print("[AppleIntelligence] Response received:")
             print("[AppleIntelligence] \(responseText.prefix(500))")
 
-            let result = parseJSONResponse(responseText)
-            print("[AppleIntelligence] Parsed result - Name: \(result.name ?? "nil"), Address: \(result.address ?? "nil"), Phone: \(result.phoneNumber ?? "nil")")
-            return result
+            let result = POIPrompts.parseJSONResponse(responseText)
+            if result.hasValidData {
+                print("[AppleIntelligence] Parsed result - Name: \(result.name ?? "nil"), Address: \(result.address ?? "nil"), Phone: \(result.phoneNumber ?? "nil")")
+                return result
+            }
+            // JSON失敗時はプレーンテキストフォールバック
+            let fallback = extractFromPlainText(responseText)
+            print("[AppleIntelligence] Fallback result - Name: \(fallback.name ?? "nil")")
+            return fallback
         } catch let error as LLMError {
             print("[AppleIntelligence] LLMError: \(error.localizedDescription)")
             throw error
@@ -76,57 +82,6 @@ actor AppleFoundationModelsService: LLMServiceProtocol {
     }
 
     // MARK: - Private Helpers
-
-    private func parseJSONResponse(_ response: String) -> ExtractedPOIData {
-        // JSONブロックを抽出（```json ... ``` や直接JSONの両方に対応）
-        var jsonString = response
-
-        // マークダウンのコードブロックを除去
-        if let startRange = response.range(of: "```json"),
-           let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        } else if let startRange = response.range(of: "```"),
-                  let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
-            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
-        }
-
-        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // JSONをパース
-        guard let data = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            // パース失敗時は正規表現で施設名と住所を抽出
-            return extractFromPlainText(response)
-        }
-
-        let name = json["name"] as? String
-        let address = json["address"] as? String
-        let phone = json["phone"] as? String
-        let hours = json["hours"] as? String
-        let category = json["category"] as? String
-        let priceRange = json["priceRange"] as? String
-
-        // 信頼度スコアを計算
-        var confidence = 0.0
-        var fields = 0
-        if name != nil { fields += 1 }
-        if address != nil { fields += 1 }
-        if phone != nil { fields += 1 }
-        if hours != nil { fields += 1 }
-        if category != nil { fields += 1 }
-        if priceRange != nil { fields += 1 }
-        confidence = Double(fields) / 6.0
-
-        return ExtractedPOIData(
-            name: name,
-            address: address,
-            phoneNumber: phone,
-            businessHours: hours,
-            category: category,
-            priceRange: priceRange,
-            confidence: confidence
-        )
-    }
 
     /// JSONパース失敗時のフォールバック
     private func extractFromPlainText(_ text: String) -> ExtractedPOIData {

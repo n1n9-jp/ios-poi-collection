@@ -138,39 +138,136 @@ enum LLMEnginePreference: String, CaseIterable {
     }
 }
 
-// MARK: - Prompt Templates
+// MARK: - Unified Prompt Templates
 
-/// スポット情報抽出用のプロンプトを生成
-func makePOIExtractionPrompt(ocrText: String) -> String {
+/// 全LLMサービス共通のプロンプト定義
+/// モデルを跨いでも同一スキーマ・同一出力制約で統一する
+enum POIPrompts {
+
+    /// システムプロンプト（Claude API等、system roleをサポートするモデル向け）
+    static let system = """
+    あなたは画像やテキストから店舗・施設情報を構造化データへ変換する情報抽出エンジンです。
+
+    以下のルールを厳守してください：
+    1. 事実のみ抽出してください。推測はしないでください。
+    2. 不明な項目は null としてください。
+    3. 出力は必ず valid JSON のみ。説明文は禁止。
+    4. 電話番号はハイフン区切りで出力（例: 045-123-4567）
+    5. 価格は表記通りに抽出（例: ¥800〜¥1,500）
+
+    ## 抽出ルール
+
+    **name（施設名）**: 最も重要なフィールドです。
+    - 看板やロゴに書かれている正式な店名を抽出
+    - ブランド名＋支店名がある場合は必ず結合（例:「アパ社長カレー」+「横浜ベイタワー店」→「アパ社長カレー 横浜ベイタワー店」）
+    - チェーン店の場合は「ブランド名 支店名」の形式
+    - 装飾的な文字（★、♪等）は除去
+
+    **address（住所）**: 都道府県から番地・建物名まで結合してフルの住所にする。断片が散らばっている場合も1つにまとめる。
+
+    **phone（電話番号）**: ハイフン区切り
+
+    **hours（営業時間）**: 開店〜閉店時間。曜日による違いがあれば含める。
+
+    **category（カテゴリ）**: 施設の種類を日本語で（例: カレー店、ラーメン店、カフェ、居酒屋、イタリアン、中華料理、焼肉店、寿司店、パン屋、バー、定食屋、レストラン、美容院、ホテル等）
+
+    **priceRange（価格帯）**: 例: ¥800〜¥1,500
+
+    ## 出力形式
+    必ず以下のJSON形式のみを出力してください。説明文は不要です。
+    ```json
+    {"name": "...", "address": "...", "phone": "...", "hours": "...", "category": "...", "priceRange": "..."}
+    ```
+    情報が読み取れないフィールドはnullにしてください。
     """
-    以下はレストランや店舗などの看板・メニュー・チラシ等の写真からOCRで読み取ったテキストです。
-    このテキストからスポット情報を推論・抽出してJSON形式で出力してください。
 
-    重要な注意点:
-    - OCRは看板のテキストを行ごとに分割します。複数行にわたる情報は結合してください
-    - 例: 「アパ社長カレー」「横浜ベイタワー店」→ 施設名は「アパ社長カレー 横浜ベイタワー店」
-    - 例: 「東京都港区」「六本木1-2-3」→ 住所は「東京都港区六本木1-2-3」
-    - 店名とブランド名・支店名が別の行にある場合は結合して1つの施設名にしてください
-    - 住所の都道府県・市区町村・番地が別の行にある場合も結合してください
+    /// OCRテキストからの抽出用ユーザープロンプト
+    static func userPromptForOCR(_ ocrText: String) -> String {
+        """
+        以下はレストランや店舗などの看板・メニュー・チラシ等の写真からOCRで読み取ったテキストです。
+        このテキストから事実として読み取れるスポット情報を抽出してJSON形式で出力してください。
 
-    OCRテキスト:
-    \(ocrText)
+        重要な注意点:
+        - 事実のみ抽出。推測はしない。不明な項目は null。
+        - OCRは看板のテキストを行ごとに分割します。複数行にわたる情報は結合してください
+        - 例: 「アパ社長カレー」「横浜ベイタワー店」→ name: "アパ社長カレー 横浜ベイタワー店"
+        - 例: 「東京都港区」「六本木1-2-3」→ address: "東京都港区六本木1-2-3"
+        - OCRの誤認識（0とO、1とIやl）は修正してください
+        - 電話番号はハイフン区切りで出力
 
-    出力形式（JSONのみ、説明不要）:
-    {
-      "name": "施設名（店名+支店名を結合）",
-      "address": "住所（複数行を結合）",
-      "phone": "電話番号",
-      "hours": "営業時間",
-      "category": "カテゴリ（例：レストラン、カフェ、居酒屋、カレー店など）",
-      "priceRange": "価格帯（例：¥1,000〜¥2,000）"
+        OCRテキスト:
+        \(ocrText)
+
+        出力形式（JSONのみ、説明不要）:
+        {"name": "施設名", "address": "住所", "phone": "電話番号", "hours": "営業時間", "category": "カテゴリ", "priceRange": "価格帯"}
+        """
     }
 
-    その他の注意:
-    - 見つからない項目はnull
-    - OCRの誤認識（0とO、1とIやl）を考慮して推測・修正
-    - 施設名や住所の明らかな誤字は修正
-    - 電話番号はハイフン区切りで出力
-    - テキストの断片から施設の種類を推論してcategoryを設定
+    /// 画像からの直接抽出用ユーザープロンプト
+    static let userPromptForImage = """
+    この画像に写っている店舗・施設のスポット情報を抽出してJSON形式で出力してください。
+
+    ルール:
+    - 事実のみ抽出。推測はしない。不明な項目は null。
+    - 施設名は店名とブランド名・支店名を結合して完全な名前にしてください
+    - 住所は都道府県から番地まで結合してください
+    - 日本語の場合は日本語で出力
+
+    出力形式（JSONのみ、説明不要）:
+    {"name": "施設名", "address": "住所", "phone": "電話番号", "hours": "営業時間", "category": "カテゴリ", "priceRange": "価格帯"}
     """
+
+    /// JSON応答をパースしてExtractedPOIDataに変換する共通処理
+    static func parseJSONResponse(_ response: String) -> ExtractedPOIData {
+        var jsonString = response
+
+        // マークダウンコードブロックを除去
+        if let startRange = response.range(of: "```json"),
+           let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
+            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
+        } else if let startRange = response.range(of: "```"),
+                  let endRange = response.range(of: "```", range: startRange.upperBound..<response.endIndex) {
+            jsonString = String(response[startRange.upperBound..<endRange.lowerBound])
+        }
+
+        // 最初の { から最後の } までを抽出
+        if let startIndex = jsonString.firstIndex(of: "{"),
+           let endIndex = jsonString.lastIndex(of: "}") {
+            jsonString = String(jsonString[startIndex...endIndex])
+        }
+
+        jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let data = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("[POIPrompts] Failed to parse JSON: \(jsonString.prefix(200))")
+            return ExtractedPOIData()
+        }
+
+        let name = json["name"] as? String
+        let address = json["address"] as? String
+        let phone = json["phone"] as? String
+        let hours = json["hours"] as? String
+        let category = json["category"] as? String
+        let priceRange = json["priceRange"] as? String
+
+        var fields = 0
+        if name != nil && !name!.isEmpty { fields += 1 }
+        if address != nil && !address!.isEmpty { fields += 1 }
+        if phone != nil && !phone!.isEmpty { fields += 1 }
+        if hours != nil && !hours!.isEmpty { fields += 1 }
+        if category != nil && !category!.isEmpty { fields += 1 }
+        if priceRange != nil && !priceRange!.isEmpty { fields += 1 }
+        let confidence = Double(fields) / 6.0
+
+        return ExtractedPOIData(
+            name: name,
+            address: address,
+            phoneNumber: phone,
+            businessHours: hours,
+            category: category,
+            priceRange: priceRange,
+            confidence: confidence
+        )
+    }
 }
